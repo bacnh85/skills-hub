@@ -45,12 +45,14 @@ async function api(path, opts = {}) {
 }
 
 let toastTimer = null;
-function toast(msg, isErr = false) {
+function toast(msg, opts = {}) {
+  const { isErr = false, action, onAction } = opts;
   document.querySelectorAll(".toast").forEach((t) => t.remove());
-  const t = el("div", { class: `toast${isErr ? " err" : ""}` }, msg);
+  const t = el("div", { class: `toast${isErr ? " err" : ""}` }, msg,
+    action ? el("button", { class: "toast-action", onclick: () => { t.remove(); onAction(); } }, action) : null);
   document.body.append(t);
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.remove(), 4200);
+  toastTimer = setTimeout(() => t.remove(), action ? 8000 : 4200);
 }
 
 // in-app confirm dialog (native confirm() is blocked-looking and unstylable)
@@ -226,21 +228,22 @@ async function viewSkills(app) {
       if (n) selCount.textContent = `${n} selected`;
       deleteBtn.textContent = n === 1 ? "Delete 1 skill" : `Delete ${n} skills`;
     };
+    // undo > confirm: deletion stays reversible for 8s, then permanent (NN/g)
     async function deleteSelected() {
       const n = selected.size;
-      const names = [...selected];
-      const what = n === 1 ? `'${names[0]}'` : `${n} skills`;
-      const detail = n === 1
-        ? `Versions, files, tags and assignments for '${names[0]}' go with it. This cannot be undone.`
-        : el("span", {}, `Versions, files, tags and assignments for all ${n} go with them. This cannot be undone.`,
-            el("div", { class: "chips", style: "margin-top:8px" }, ...names.slice(0, 8).map((x) => el("span", { class: "chip" }, x)),
-              n > 8 ? el("span", { class: "chip more" }, `+${n - 8}`) : ""));
-      if (!(await confirmDialog(`Delete ${what}?`, detail, `Delete ${what}`))) return;
       try {
         const r = await api("/api/skills/delete-batch", { method: "POST", body: JSON.stringify({ names: [...selected] }) });
-        toast(`Deleted ${r.deleted} skill${r.deleted === 1 ? "" : "s"}`);
         selected.clear();
         render();
+        toast(`Deleted ${r.deleted} skill${r.deleted === 1 ? "" : "s"}`, {
+          action: "Undo", onAction: async () => {
+            try {
+              const u = await api("/api/skills/undo-delete", { method: "POST", body: JSON.stringify({ undo_id: r.undo_id }) });
+              toast(u.skipped.length ? `Restored ${u.restored.length}; ${u.skipped.join(", ")} was recreated meanwhile` : `Restored ${u.restored.join(", ")}`);
+              render();
+            } catch (e2) { toast(e2.message, true); }
+          },
+        });
       } catch (e) { toast(e.message, true); }
     }
 
@@ -274,21 +277,30 @@ async function viewSkills(app) {
           const box = el("input", { type: "checkbox", "aria-label": `Select ${s.name}`, checked: selected.has(s.name) ? true : null });
           box.addEventListener("click", (e) => e.stopPropagation());
           box.addEventListener("change", () => { box.checked ? selected.add(s.name) : selected.delete(s.name); syncDeleteBtn(); });
-          const del = el("button", { class: "btn small danger", title: `Delete ${s.name}`, "aria-label": `Delete ${s.name}`, onclick: async (e) => {
+          const del = el("button", { class: "row-del", title: `Delete ${s.name}`, "aria-label": `Delete ${s.name}`, onclick: async (e) => {
             e.stopPropagation();
-            if (!(await confirmDialog(`Delete '${s.name}'?`, "Versions, files, tags and assignments for this skill go with it. This cannot be undone.", "Delete skill"))) return;
-            try { await api(`/api/skills/${encodeURIComponent(s.name)}`, { method: "DELETE", body: "{}" }); toast(`Deleted ${s.name}`); render(); }
-            catch (e2) { toast(e2.message, true); }
-          } }, "Delete");
+            try {
+              const r = await api(`/api/skills/${encodeURIComponent(s.name)}`, { method: "DELETE", body: "{}" });
+              render();
+              toast(`Deleted ${s.name}`, {
+                action: "Undo", onAction: async () => {
+                  try {
+                    await api("/api/skills/undo-delete", { method: "POST", body: JSON.stringify({ undo_id: r.undo_id }) });
+                    toast(`Restored ${s.name}`);
+                    render();
+                  } catch (e2) { toast(e2.message, true); }
+                },
+              });
+            } catch (e2) { toast(e2.message, true); }
+          } }, "✕");
           out.push(el("tr", { class: "row", tabindex: "0", onclick: open, onkeydown: (e) => { if (e.key === "Enter") open(); } },
             el("td", { class: "cell-check" }, box),
-            el("td", { class: "idx" }, String(i + 1).padStart(2, "0")),
-            el("td", { class: "name" }, s.name),
+            el("td", { class: "name-cell" }, el("span", { class: "name" }, s.name),
+              s.description ? el("span", { class: "row-desc" }, s.description) : null),
             el("td", { class: "col-desc" }, tagChips(s.tags || [])),
             el("td", { class: "num" }, s.current_semver || "—"),
             el("td", {}, pill(s.status)),
             el("td", { class: "num right" }, s.updated_at?.slice(0, 10) || ""),
-            el("td", { class: "num right muted" }, "→"),
             el("td", { class: "right" }, del)));
         }
       }
@@ -308,7 +320,7 @@ async function viewSkills(app) {
         el("div", {},
           el("div", { class: "toolbar" }, search, statusFilter),
           el("table", { class: "ledger" },
-            el("thead", {}, el("tr", {}, el("th", { class: "cell-check" }), el("th", {}, ""), el("th", {}, "Skill"), el("th", { class: "col-desc" }, "Tags"), el("th", {}, "Version"), el("th", {}, "Status"), el("th", { class: "right" }, "Updated"), el("th", {}, ""), el("th", {}, ""))),
+            el("thead", {}, el("tr", {}, el("th", { class: "cell-check" }), el("th", {}, "Skill"), el("th", { class: "col-desc" }, "Tags"), el("th", {}, "Version"), el("th", {}, "Status"), el("th", { class: "right" }, "Updated"), el("th", {}, ""))),
             tableBody))),
     );
   } catch (e) { app.replaceChildren(errorPanel(e)); }

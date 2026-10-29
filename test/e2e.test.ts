@@ -386,11 +386,39 @@ test("8b. delete: single + batch, assignments cleaned up", async () => {
   // batch delete removes the rest and reports missing names
   const batch = await api("/api/skills/delete-batch", { method: "POST", body: JSON.stringify({ names: ["del-me-b", "del-me-ghost"] }) });
   assert.equal(batch.status, 200);
-  assert.deepEqual(batch.body, { ok: true, deleted: 1, missing: ["del-me-ghost"] });
+  assert.deepEqual(batch.body, { ok: true, deleted: 1, missing: ["del-me-ghost"], undo_id: batch.body.undo_id });
+  assert.ok(Number.isInteger(batch.body.undo_id), "batch delete returns an undo id");
   const cols = await api("/api/collections");
   const pack = cols.body.find((c: any) => c.name === "del-pack");
   assert.ok(pack, "collection itself survives");
   assert.equal(pack.skill_ids.length, 0, "collection_items row should cascade away");
+
+  // undo restores the skill, its version and its collection membership
+  const undo = await api("/api/skills/undo-delete", { method: "POST", body: JSON.stringify({ undo_id: batch.body.undo_id }) });
+  assert.equal(undo.status, 200);
+  assert.deepEqual(undo.body, { ok: true, restored: ["del-me-b"], skipped: [] });
+  assert.equal((await api("/api/skills/del-me-b")).status, 200);
+  const pack2 = (await api("/api/collections")).body.find((c: any) => c.name === "del-pack");
+  assert.equal(pack2.skill_ids.length, 1, "collection membership restored");
+  const detail2 = await api("/api/skills/del-me-b");
+  assert.ok(detail2.body.current?.body?.includes("step"), "version body survived delete+restore");
+
+  // single delete + undo restores the token assignment too (del-me-b had none; give it one)
+  await api(`/api/tokens/${tok.body.id}/assignments`, { method: "PUT", body: JSON.stringify({ kind: "skill", target_id: idB }) });
+  const one2 = await api("/api/skills/del-me-b", { method: "DELETE", body: "{}" });
+  assert.ok(Number.isInteger(one2.body.undo_id), "single delete returns an undo id");
+  const undoB = await api("/api/skills/undo-delete", { method: "POST", body: JSON.stringify({ undo_id: one2.body.undo_id }) });
+  assert.deepEqual(undoB.body, { ok: true, restored: ["del-me-b"], skipped: [] });
+  const assigns2 = await api(`/api/tokens/${tok.body.id}/assignments`);
+  assert.ok(assigns2.body.some((x: any) => x.kind === "skill" && x.target_id === idB), "skill assignment restored");
+
+  // second undo of the same id is gone (window consumed)
+  const undo2 = await api("/api/skills/undo-delete", { method: "POST", body: JSON.stringify({ undo_id: batch.body.undo_id }) });
+  assert.equal(undo2.status, 404);
+
+  // serving the restored skill works end to end (del-probe token holds the restored assignment)
+  const tgz = await fetch(`${BASE}/s/del-me-b.tgz`, { headers: { authorization: `Bearer ${tok.body.token}` } });
+  assert.equal(tgz.status, 200);
 });
 
 test("9. client-served endpoints honour PUBLIC_SKILL_ACCESS=false", async () => {

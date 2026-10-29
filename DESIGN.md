@@ -23,7 +23,7 @@ colors:
     ink-soft: "#CFD6D0"
     rule: "#2A342D"
     forest: "#93E0C4"
-    forest-soft: "#1C2D25"
+    forest-soft: "#16241D"
     amber: "#F2D084"
     amber-soft: "#2E2614"
     rust: "#F9CCBF"

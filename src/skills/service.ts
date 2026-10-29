@@ -251,6 +251,76 @@ export function tagsOf(skillId: number): string[] {
     .all(skillId) as any[]).map((r) => r.name);
 }
 
+// ---------- delete with undo ----------
+// ponytail: in-memory snapshot for the last deletes; a restart drops the undo
+// buffer, which only means the Undo button has nothing to restore.
+
+export interface SkillSnapshot {
+  skill: Record<string, any>;
+  versions: Record<string, any>[]; // each with .files rows
+  tags: string[];
+  collectionIds: number[];
+  assignments: { token_id: number; pin: string }[];
+}
+
+export function snapshotSkill(name: string): SkillSnapshot | null {
+  const s = db.prepare("SELECT * FROM skills WHERE name = ?").get(name) as any;
+  if (!s) return null;
+  const versions = (db.prepare("SELECT * FROM skill_versions WHERE skill_id = ?").all(s.id) as any[]).map((v) => ({
+    ...v,
+    files: db.prepare("SELECT path, content, sha256, size FROM skill_files WHERE skill_version_id = ?").all(v.id),
+  }));
+  return {
+    skill: s,
+    versions,
+    tags: tagsOf(s.id),
+    collectionIds: (db.prepare("SELECT collection_id FROM collection_items WHERE skill_id = ?").all(s.id) as any[]).map((r) => r.collection_id),
+    assignments: db.prepare("SELECT token_id, pin FROM assignments WHERE kind = 'skill' AND target_id = ?").all(s.id) as any[],
+  };
+}
+
+export function deleteSkillWithSnapshot(name: string): { snapshot: SkillSnapshot } | null {
+  const snapshot = snapshotSkill(name);
+  if (!snapshot) return null;
+  db.prepare("DELETE FROM assignments WHERE kind = 'skill' AND target_id = ?").run(snapshot.skill.id);
+  db.prepare("DELETE FROM skills WHERE name = ?").run(name);
+  return { snapshot };
+}
+
+export function restoreSkill(snap: SkillSnapshot): boolean {
+  if (db.prepare("SELECT id FROM skills WHERE name = ?").get(snap.skill.name)) return false;
+  const s = snap.skill;
+  // references must still exist — FK failures would abort the whole restore
+  const categoryId = s.category_id && db.prepare("SELECT id FROM categories WHERE id = ?").get(s.category_id) ? s.category_id : null;
+  const r = db
+    .prepare(
+      "INSERT INTO skills (id, name, category_id, status, source, security_flags_json, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+    )
+    .run(s.id, s.name, categoryId, s.status, s.source, s.security_flags_json, s.created_at, s.updated_at);
+  const skillId = Number(r.lastInsertRowid);
+  for (const v of snap.versions as any[]) {
+    const vr = db
+      .prepare(
+        "INSERT INTO skill_versions (id, skill_id, semver, body, frontmatter_json, lint_score, lint_report_json, status, author_kind, author_token_id, source_url, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+      )
+      .run(v.id, skillId, v.semver, v.body, v.frontmatter_json, v.lint_score, v.lint_report_json, v.status, v.author_kind, v.author_token_id, v.source_url, v.created_at);
+    const versionId = Number(vr.lastInsertRowid);
+    for (const f of v.files as any[])
+      db.prepare("INSERT INTO skill_files (skill_version_id, path, content, sha256, size) VALUES (?,?,?,?,?)").run(versionId, f.path, f.content, f.sha256, f.size);
+  }
+  // current_version_id was rewritten by the version re-insert; point it back
+  db.prepare("UPDATE skills SET current_version_id = ? WHERE id = ?").run(s.current_version_id, skillId);
+  for (const tag of snap.tags) {
+    db.prepare("INSERT OR IGNORE INTO tags (name) VALUES (?)").run(tag);
+    db.prepare("INSERT OR IGNORE INTO skill_tags (skill_id, tag_id) SELECT ?, id FROM tags WHERE name = ?").run(skillId, tag);
+  }
+  for (const cid of snap.collectionIds)
+    db.prepare("INSERT OR IGNORE INTO collection_items (collection_id, skill_id) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM collections WHERE id = ?)").run(cid, skillId, cid);
+  for (const a of snap.assignments)
+    db.prepare("INSERT OR IGNORE INTO assignments (token_id, kind, target_id, pin) SELECT ?, 'skill', ?, ? WHERE EXISTS (SELECT 1 FROM tokens WHERE id = ?)").run(a.token_id, skillId, a.pin, a.token_id);
+  return true;
+}
+
 export function resolveVisibleSkills(tokenId: number): ResolvedSkill[] {
   const assigns = db
     .prepare("SELECT kind, target_id, pin FROM assignments WHERE token_id = ? ORDER BY CASE kind WHEN 'skill' THEN 0 WHEN 'collection' THEN 1 ELSE 2 END, id")

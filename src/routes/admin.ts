@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { db, audit, genToken, sha256 } from "../db.ts";
 import { adminGuard, type Actor } from "../auth.ts";
-import { publishVersion, approveVersion, rejectVersion, getResolved, listVersionFiles } from "../skills/service.ts";
+import { publishVersion, approveVersion, rejectVersion, getResolved, listVersionFiles, deleteSkillWithSnapshot, restoreSkill, type SkillSnapshot } from "../skills/service.ts";
 import { config } from "../config.ts";
 
 const body200 = "This is placeholder body content for a new skill. Replace with real instructions before publishing.\n".repeat(5);
@@ -20,6 +20,10 @@ export function registerAdminRoutes(app: FastifyInstance) {
 }
 
 function registerAdminRoutesInner(app: FastifyInstance) {
+  // undo buffer for the last deletes; single process, single admin — memory is enough
+  let undoSeq = 0;
+  let undoBuffer: { id: number; snapshots: SkillSnapshot[]; actor: number | null }[] = [];
+
   // ---------- categories ----------
   app.get("/api/categories", async () =>
     db.prepare("SELECT * FROM categories ORDER BY name").all(),
@@ -119,7 +123,7 @@ function registerAdminRoutesInner(app: FastifyInstance) {
       .object({ status: z.string().optional(), category_id: z.coerce.number().optional(), tag: z.string().optional(), q: z.string().optional() })
       .parse((req as any).query);
     let sql = `SELECT s.id, s.name, s.status, s.source, s.category_id, c.name AS category, s.security_flags_json,
-      s.current_version_id, v.semver AS current_semver, s.updated_at
+      s.current_version_id, v.semver AS current_semver, json_extract(v.frontmatter_json, '$.description') AS description, s.updated_at
       FROM skills s
       LEFT JOIN categories c ON c.id = s.category_id
       LEFT JOIN skill_versions v ON v.id = s.current_version_id WHERE 1=1`;
@@ -259,28 +263,44 @@ function registerAdminRoutesInner(app: FastifyInstance) {
 
   app.delete("/api/skills/:name", async (req, reply) => {
     const { name } = (req as any).params as { name: string };
-    // clean skill-kind assignments pointing at this skill (no FK covers them)
-    const s = db.prepare("SELECT id FROM skills WHERE name = ?").get(name) as any;
-    if (!s) return reply.code(404).send({ error: "not found" });
-    db.prepare("DELETE FROM assignments WHERE kind = 'skill' AND target_id = ?").run(s.id);
-    const r = db.prepare("DELETE FROM skills WHERE name = ?").run(name);
+    const r = deleteSkillWithSnapshot(name);
+    if (!r) return reply.code(404).send({ error: "not found" });
+    undoBuffer.unshift({ id: ++undoSeq, snapshots: [r.snapshot], actor: actor(req).id });
+    if (undoBuffer.length > 10) undoBuffer.pop();
     audit("admin", actor(req).id, "skill.delete", { name });
-    return { ok: true };
+    return { ok: true, undo_id: undoBuffer[0].id };
   });
 
   app.post("/api/skills/delete-batch", async (req) => {
     const p = z.object({ names: z.array(z.string().min(1)).min(1).max(200) }).parse(req.body);
     let deleted = 0;
     const missing: string[] = [];
+    const snapshots: SkillSnapshot[] = [];
     for (const name of p.names) {
-      const s = db.prepare("SELECT id FROM skills WHERE name = ?").get(name) as any;
-      if (!s) { missing.push(name); continue; }
-      db.prepare("DELETE FROM assignments WHERE kind = 'skill' AND target_id = ?").run(s.id);
-      const r = db.prepare("DELETE FROM skills WHERE name = ?").run(name);
-      deleted += Number(r.changes);
+      const r = deleteSkillWithSnapshot(name);
+      if (!r) { missing.push(name); continue; }
+      snapshots.push(r.snapshot);
+      deleted++;
     }
+    undoBuffer.unshift({ id: ++undoSeq, snapshots, actor: actor(req).id });
+    if (undoBuffer.length > 10) undoBuffer.pop();
     audit("admin", actor(req).id, "skill.delete.batch", { names: p.names, deleted, missing });
-    return { ok: true, deleted, missing };
+    return { ok: true, deleted, missing, undo_id: undoBuffer[0].id };
+  });
+
+  app.post("/api/skills/undo-delete", async (req, reply) => {
+    const { undo_id } = z.object({ undo_id: z.coerce.number() }).parse(req.body ?? {});
+    const entry = undoBuffer.find((u) => u.id === undo_id && u.actor === actor(req).id);
+    if (!entry) return reply.code(404).send({ error: "undo window expired" });
+    const restored: string[] = [];
+    const skipped: string[] = [];
+    for (const snap of entry.snapshots) {
+      if (restoreSkill(snap)) restored.push(snap.skill.name);
+      else skipped.push(snap.skill.name);
+    }
+    undoBuffer = undoBuffer.filter((u) => u.id !== undo_id);
+    audit("admin", actor(req).id, "skill.restore", { restored, skipped });
+    return { ok: true, restored, skipped };
   });
 
   // ---------- versions ----------

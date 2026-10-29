@@ -69,7 +69,7 @@
   --ink-soft: #cfd6d0;
   --rule: #2a342d;
   --forest: #93e0c4;
-  --forest-soft: #1c2d25;
+  --forest-soft: #16241d;
   --amber: #f2d084;
   --amber-soft: #2e2614;
   --rust: #f9ccbf;
@@ -361,6 +361,60 @@ label {
   text-align: right;
 }
 
+/* row identity: the name leads, description underneath */
+.name-cell {
+  min-width: 220px;
+}
+.name-cell .name {
+  display: block;
+}
+.row-desc {
+  display: block;
+  color: var(--ink-soft);
+  font-size: var(--fs-xs);
+  max-width: 460px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+/* quiet destructive affordance — revealed on row hover/focus, never shouting
+   next to benign actions; the undo toast is the real safety net */
+.row-del {
+  border: 1px solid transparent;
+  background: none;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--fs-sm);
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0;
+}
+.row-del:hover {
+  color: var(--rust);
+  background: var(--rust-soft);
+}
+.row-del:active {
+  background: var(--active-surface);
+}
+.row-del:focus-visible {
+  outline: 2px solid var(--forest);
+  outline-offset: 2px;
+  opacity: 1;
+}
+tr.row:hover .row-del,
+tr.row:focus-within .row-del {
+  opacity: 1;
+}
+@media (hover: none) {
+  .row-del {
+    opacity: 1;
+  }
+}
+
 /* ---------- pills ---------- */
 .pill {
   display: inline-block;
@@ -528,11 +582,11 @@ label {
 .split-menu > div {
   min-width: 0;
 }
-.split-menu .ledger td:nth-child(3),
-.split-menu .ledger th:nth-child(3) {
+.split-menu .ledger td:nth-child(2),
+.split-menu .ledger th:nth-child(2) {
   max-width: 220px;
 }
-.split-menu .ledger td:nth-child(3) {
+.split-menu .ledger td:nth-child(2) {
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -678,6 +732,26 @@ textarea {
 }
 .toast.err {
   background: var(--rust-deep);
+}
+.toast-action {
+  margin-left: var(--sp-2);
+  background: none;
+  border: none;
+  color: var(--inverse-ink);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.toast-action:hover {
+  text-decoration-thickness: 2px;
+}
+.toast-action:focus-visible {
+  outline: 2px solid var(--inverse-ink);
+  outline-offset: 2px;
 }
 pre.code {
   background: var(--paper-deep);
