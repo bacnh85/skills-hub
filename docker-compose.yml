@@ -1,0 +1,17 @@
+services:
+  skills-portal:
+    build: .
+    ports:
+      - "8787:8787"
+    volumes:
+      - portal-data:/app/data
+    environment:
+      - PORT=8787
+      # - BASE_URL=https://skills.example.com
+      # - ADMIN_TOKEN=sk_your_fixed_token
+      # - AI_BASE_URL=http://host.docker.internal:11434/v1
+      # - AI_MODEL=llama3.1
+      # - GITHUB_TOKEN=ghp_xxx
+      # - PUBLIC_SKILL_ACCESS=false
+volumes:
+  portal-data:
