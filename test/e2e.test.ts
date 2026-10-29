@@ -262,6 +262,21 @@ test("5. npx-skills interop: .tgz serves a valid tarball with SKILL.md", async (
   assert.equal(forbidden.status, 403);
 });
 
+test("5b. admin token is unscoped on the HTTP endpoints too (not confused with a client id)", async () => {
+  // Regression: the routes passed the admin's row id where a *token* id was
+  // expected, so an admin was scoped to whichever client token shared that number.
+  const res = await fetch(`${BASE}/s/pdf-report/SKILL.md`, { headers: { authorization: `Bearer ${ADMIN}` } });
+  assert.equal(res.status, 200, "admin must be able to read any published skill");
+
+  const tgz = await fetch(`${BASE}/s/pdf-report.tgz`, { headers: { authorization: `Bearer ${ADMIN}` } });
+  assert.equal(tgz.status, 200, "admin must be able to download any published skill");
+
+  // and a client token is still properly scoped
+  const other = (await api("/api/tokens", { method: "POST", body: JSON.stringify({ name: "scoping-check", scopes: ["skills:read"] }) })).body.token;
+  const denied = await fetch(`${BASE}/s/pdf-report/SKILL.md`, { headers: { authorization: `Bearer ${other}` } });
+  assert.equal(denied.status, 403, "unassigned client token must be refused");
+});
+
 test("6. ingest: preview stores nothing, import gates flagged skills", async () => {
   const before = await api("/api/skills");
   const preview = await api("/api/import/preview", { method: "POST", body: JSON.stringify({ url: REPO }) });

@@ -52,6 +52,7 @@ function registerOpsInner(app: FastifyInstance) {
           version: String((f.frontmatter.metadata as any)?.version ?? f.frontmatter.version ?? ""),
           files: f.files.map((x) => x.path),
           security_flags: f.security_flags,
+          notes: f.notes,
         }));
       } finally {
         fetched.cleanup();

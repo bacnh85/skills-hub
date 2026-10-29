@@ -11,6 +11,7 @@ export interface ImportReportItem {
   pending?: boolean;
   lint_score?: number;
   security_flags?: string[];
+  notes?: string[];
   error?: string;
 }
 
@@ -77,9 +78,24 @@ async function importOne(f: FoundSkill, actorId: number | null): Promise<ImportR
     // force pending + record flags on the skill row
     if (r.versionId) db.prepare("UPDATE skill_versions SET status = 'pending' WHERE id = ?").run(r.versionId);
     db.prepare("UPDATE skills SET security_flags_json = ?, status = 'draft' WHERE name = ?").run(JSON.stringify(f.security_flags), f.name);
-    return { skill: f.name, action: existing ? "version-added" : "created", semver: ver, pending: true, lint_score: r.lint?.score, security_flags: f.security_flags };
+    return {
+      skill: f.name,
+      action: existing ? "version-added" : "created",
+      semver: ver,
+      pending: true,
+      lint_score: r.lint?.score,
+      security_flags: f.security_flags,
+      notes: f.notes,
+    };
   }
   // clean imports from trusted admins stay admin-approved; skill published
   db.prepare("UPDATE skills SET status = 'published' WHERE name = ?").run(f.name);
-  return { skill: f.name, action: existing ? "version-added" : "created", semver: ver, pending: false, lint_score: r.lint?.score };
+  return {
+    skill: f.name,
+    action: existing ? "version-added" : "created",
+    semver: ver,
+    pending: false,
+    lint_score: r.lint?.score,
+    notes: f.notes,
+  };
 }

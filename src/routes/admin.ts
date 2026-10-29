@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db, audit, genToken, sha256 } from "../db.ts";
 import { adminGuard, type Actor } from "../auth.ts";
 import { publishVersion, approveVersion, rejectVersion, getResolved, listVersionFiles } from "../skills/service.ts";
+import { config } from "../config.ts";
 
 const body200 = "This is placeholder body content for a new skill. Replace with real instructions before publishing.\n".repeat(5);
 
@@ -336,6 +337,7 @@ function registerAdminRoutesInner(app: FastifyInstance) {
       collections: one("SELECT COUNT(*) n FROM collections"),
       tokens: one("SELECT COUNT(*) n FROM tokens WHERE revoked_at IS NULL"),
       sources: one("SELECT COUNT(*) n FROM sources WHERE enabled = 1"),
+      ai_configured: Boolean(config.AI_BASE_URL),
     };
   });
   app.get("/api/audit", async (req) => {

@@ -20,8 +20,15 @@ export function registerPublicRoutes(app: FastifyInstance) {
     return true;
   }
 
+  // Only a client token is scoped. An admin id is NOT a token id — passing the
+  // admin's row id here would silently scope admins to whichever client token
+  // happens to share that number.
+  function tokenIdOf(actor: { kind: string; id: number } | undefined): number | null {
+    return actor?.kind === "token" ? actor.id : null;
+  }
+
   function allowedForToken(tokenId: number | null, skillName: string): boolean {
-    if (tokenId === null) return true; // guard() already enforced auth
+    if (tokenId === null) return true; // admin or anonymous (guard() already checked auth)
     return resolveVisibleSkills(tokenId).some((s) => s.name === skillName);
   }
 
@@ -33,7 +40,7 @@ export function registerPublicRoutes(app: FastifyInstance) {
     if (!guard(req, reply)) return;
     const { name } = z.object({ name: z.string() }).parse((req as any).params);
     const actor = (req as any).actor as { kind: string; id: number } | undefined;
-    if (!allowedForToken(actor?.id ?? null, name))
+    if (!allowedForToken(tokenIdOf(actor), name))
       return reply.code(403).send({ error: "skill not assigned to this token" });
     const r = getResolved(name);
     if (!r) return reply.code(404).send({ error: "not found" });
@@ -46,7 +53,7 @@ export function registerPublicRoutes(app: FastifyInstance) {
     if (!guard(req, reply)) return;
     const { name, semver } = z.object({ name: z.string(), semver: z.string() }).parse((req as any).params);
     const actor = (req as any).actor as { kind: string; id: number } | undefined;
-    if (!allowedForToken(actor?.id ?? null, name)) return reply.code(403).send({ error: "skill not assigned" });
+    if (!allowedForToken(tokenIdOf(actor), name)) return reply.code(403).send({ error: "skill not assigned" });
     const r = getResolved(name, semver);
     if (!r) return reply.code(404).send({ error: "not found" });
     reply.header("content-type", "text/markdown; charset=utf-8");
@@ -73,7 +80,7 @@ export function registerPublicRoutes(app: FastifyInstance) {
     if (!guard(req, reply)) return;
     const { name } = z.object({ name: z.string() }).parse((req as any).params);
     const actor = (req as any).actor as { kind: string; id: number } | undefined;
-    if (!allowedForToken(actor?.id ?? null, name)) return reply.code(403).send({ error: "skill not assigned" });
+    if (!allowedForToken(tokenIdOf(actor), name)) return reply.code(403).send({ error: "skill not assigned" });
     const files = filesFor(name);
     if (!files) return reply.code(404).send({ error: "not found" });
     if (actor?.kind === "token") usageRow(actor.id, "http.get_skill_tgz", name);

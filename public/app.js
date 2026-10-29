@@ -584,7 +584,8 @@ function renderSecurityNote() {
 async function viewAi(app) {
   app.replaceChildren(el("div", { class: "empty" }, "Reading jobs…"));
   try {
-    const jobs = await api("/api/ai/jobs");
+    const [jobs, stats] = await Promise.all([api("/api/ai/jobs"), api("/api/stats")]);
+    const aiReady = stats.ai_configured === true;
     const detail = el("div");
     const run = async (kind) => {
       try {
@@ -603,11 +604,14 @@ async function viewAi(app) {
       el("div", { class: "page-head" }, el("h1", {}, "AI desk"), el("span", { class: "count" }, "advisory only — nothing changes until you apply it")),
       el("div", { class: "panel" },
         el("h2", {}, "Run a job"),
-        el("p", { class: "muted", style: "margin-top:0" }, "Requires AI_BASE_URL pointing at an OpenAI-compatible endpoint (local Ollama works). Suggestions are proposals; apply them explicitly."),
+        aiReady
+          ? el("p", { class: "muted", style: "margin-top:0" }, "Suggestions are proposals; apply them explicitly. Nothing changes until you do.")
+          : el("div", { class: "error-banner", style: "margin-bottom:16px" },
+              "AI is not configured on this server. Set AI_BASE_URL to an OpenAI-compatible endpoint (Ollama works: http://localhost:11434/v1) and restart. Everything else in the portal works without it."),
         el("div", { class: "checkline", style: "gap:8px" },
-          el("button", { class: "btn primary", onclick: () => run("categorize") }, "Sort into categories"),
-          el("button", { class: "btn", onclick: () => run("dedupe_review") }, "Review duplicates"),
-          el("button", { class: "btn", onclick: () => run("improve_descriptions") }, "Improve descriptions"))),
+          el("button", { class: "btn primary", disabled: !aiReady, title: aiReady ? null : "AI_BASE_URL is not set", onclick: () => run("categorize") }, "Sort into categories"),
+          el("button", { class: "btn", disabled: !aiReady, title: aiReady ? null : "AI_BASE_URL is not set", onclick: () => run("dedupe_review") }, "Review duplicates"),
+          el("button", { class: "btn", disabled: !aiReady, title: aiReady ? null : "AI_BASE_URL is not set", onclick: () => run("improve_descriptions") }, "Improve descriptions"))),
       el("div", { class: "panel" }, el("h2", {}, "Jobs"),
         jobs.length === 0 ? el("div", { class: "empty" }, el("strong", {}, "No jobs yet"), "Run one above; results appear here with an Apply action.") :
         el("table", { class: "ledger" },
