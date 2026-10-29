@@ -155,6 +155,7 @@ export function initDb(path: string) {
   if (path !== ":memory:") mkdirSync(dirname(resolve(path)), { recursive: true });
   db = new DatabaseSync(path);
   db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA foreign_keys = ON"); // skill delete must cascade to collection_items/skill_tags
   loadMigrations(db);
 }
 

@@ -259,10 +259,28 @@ function registerAdminRoutesInner(app: FastifyInstance) {
 
   app.delete("/api/skills/:name", async (req, reply) => {
     const { name } = (req as any).params as { name: string };
+    // clean skill-kind assignments pointing at this skill (no FK covers them)
+    const s = db.prepare("SELECT id FROM skills WHERE name = ?").get(name) as any;
+    if (!s) return reply.code(404).send({ error: "not found" });
+    db.prepare("DELETE FROM assignments WHERE kind = 'skill' AND target_id = ?").run(s.id);
     const r = db.prepare("DELETE FROM skills WHERE name = ?").run(name);
-    if (Number(r.changes) === 0) return reply.code(404).send({ error: "not found" });
     audit("admin", actor(req).id, "skill.delete", { name });
     return { ok: true };
+  });
+
+  app.post("/api/skills/delete-batch", async (req) => {
+    const p = z.object({ names: z.array(z.string().min(1)).min(1).max(200) }).parse(req.body);
+    let deleted = 0;
+    const missing: string[] = [];
+    for (const name of p.names) {
+      const s = db.prepare("SELECT id FROM skills WHERE name = ?").get(name) as any;
+      if (!s) { missing.push(name); continue; }
+      db.prepare("DELETE FROM assignments WHERE kind = 'skill' AND target_id = ?").run(s.id);
+      const r = db.prepare("DELETE FROM skills WHERE name = ?").run(name);
+      deleted += Number(r.changes);
+    }
+    audit("admin", actor(req).id, "skill.delete.batch", { names: p.names, deleted, missing });
+    return { ok: true, deleted, missing };
   });
 
   // ---------- versions ----------

@@ -152,30 +152,67 @@ async function viewSkills(app) {
   app.replaceChildren(el("div", { class: "empty" }, "Reading the catalog…"));
   try {
     const [skills, cats, tags] = await Promise.all([api("/api/skills"), api("/api/categories"), api("/api/tags")]);
-    const search = el("input", { type: "text", placeholder: "Filter by name or tag…" });
+    const search = el("input", { type: "text", placeholder: "Filter skills…" });
     const statusFilter = el("select", {}, el("option", { value: "" }, "all statuses"), ...["published", "draft", "deprecated"].map((s) => el("option", { value: s }, s)));
-    const catFilter = el("select", {}, el("option", { value: "" }, "all categories"), ...cats.map((c) => el("option", { value: c.id }, c.name)));
 
-    // browse-by-tag: clicking a chip filters the view to that tag
-    let activeTag = "";
-    const tagBar = el("div", { class: "tagbar" });
-    const drawTagBar = () => {
-      tagBar.replaceChildren(
-        el("button", { class: `chip${activeTag === "" ? " on" : ""}`, onclick: () => { activeTag = ""; drawTagBar(); draw(); } }, "all tags"),
+    // Hermes-style left menu: categories + tags, each with a live count.
+    // Filters compose: one category (or all), any number of tags, text, status.
+    let activeCat = "";
+    const activeTags = new Set();
+    // deep-link handoff from the taxonomy view (click a count there, land filtered here)
+    const handoffCat = sessionStorage.getItem("skills_filter_cat");
+    const handoffTag = sessionStorage.getItem("skills_filter_tag");
+    if (handoffCat) { activeCat = handoffCat; sessionStorage.removeItem("skills_filter_cat"); }
+    if (handoffTag) { activeTags.add(handoffTag); sessionStorage.removeItem("skills_filter_tag"); }
+    const matchesBase = (s) => {
+      const q = search.value.toLowerCase();
+      return (!q || s.name.toLowerCase().includes(q) || (s.tags || []).some((t) => t.includes(q))) &&
+        (!statusFilter.value || s.status === statusFilter.value);
+    };
+    const catCount = (id) => skills.filter((s) => String(s.category_id) === String(id) && matchesBase(s)).length;
+    const menu = el("nav", { class: "side-menu", "aria-label": "Browse by category or tag" });
+    const drawMenu = () => {
+      const catBtn = (label, value, count) =>
+        el("button", { class: `side-link${activeCat === value ? " on" : ""}`, "aria-pressed": activeCat === value ? "true" : "false", onclick: () => { activeCat = activeCat === value ? "" : value; drawMenu(); draw(); } },
+          el("span", {}, label), el("span", { class: "side-count num" }, String(count)));
+      menu.replaceChildren(
+        el("div", { class: "side-head" }, "Categories"),
+        catBtn("All skills", "", skills.filter(matchesBase).length),
+        ...cats.map((c) => catBtn(c.name, String(c.id), catCount(c.id))),
+        el("div", { class: "side-head" }, "Tags"),
         ...tags.filter((t) => t.skill_count > 0).map((t) =>
-          el("button", { class: `chip${activeTag === t.name ? " on" : ""}`, onclick: () => { activeTag = activeTag === t.name ? "" : t.name; drawTagBar(); draw(); } }, `${t.name} ${t.skill_count}`)),
+          el("button", { class: `side-link${activeTags.has(t.name) ? " on" : ""}`, "aria-pressed": activeTags.has(t.name) ? "true" : "false", onclick: () => { activeTags.has(t.name) ? activeTags.delete(t.name) : activeTags.add(t.name); drawMenu(); draw(); } },
+            el("span", {}, t.name), el("span", { class: "side-count num" }, String(t.skill_count)))),
       );
     };
-    drawTagBar();
 
     const tableBody = el("tbody");
+    const selected = new Set();
+    const deleteBtn = el("button", { class: "btn small danger", style: "display:none", onclick: deleteSelected });
+    const selCount = el("span", { class: "muted", style: "display:none;font-size:var(--fs-sm)" });
+    const syncDeleteBtn = () => {
+      const n = selected.size;
+      deleteBtn.style.display = n ? "" : "none";
+      selCount.style.display = n ? "" : "none";
+      if (n) selCount.textContent = `${n} selected`;
+      deleteBtn.textContent = n === 1 ? "Delete 1 skill" : `Delete ${n} skills`;
+    };
+    async function deleteSelected() {
+      const n = selected.size;
+      if (!confirm(`Delete ${n === 1 ? "'" + [...selected][0] + "'" : n + " skills"}? Versions, files, tags and assignments go with them. This cannot be undone.`)) return;
+      try {
+        const r = await api("/api/skills/delete-batch", { method: "POST", body: JSON.stringify({ names: [...selected] }) });
+        toast(`Deleted ${r.deleted} skill${r.deleted === 1 ? "" : "s"}`);
+        selected.clear();
+        render();
+      } catch (e) { toast(e.message, true); }
+    }
+
     const draw = () => {
-      const q = search.value.toLowerCase();
       const rows = skills.filter((s) =>
-        (!q || s.name.toLowerCase().includes(q) || (s.tags || []).some((t) => t.includes(q))) &&
-        (!statusFilter.value || s.status === statusFilter.value) &&
-        (!catFilter.value || String(s.category_id) === catFilter.value) &&
-        (!activeTag || (s.tags || []).includes(activeTag)));
+        matchesBase(s) &&
+        (!activeCat || String(s.category_id) === activeCat) &&
+        (activeTags.size === 0 || [...activeTags].every((t) => (s.tags || []).includes(t))));
       if (rows.length === 0) {
         tableBody.replaceChildren(
           el("tr", {}, el("td", { colspan: 7 },
@@ -198,31 +235,45 @@ async function viewSkills(app) {
           el("span", { class: "muted" }, ` ${items.length} skill${items.length === 1 ? "" : "s"}`))));
         for (const [i, s] of items.entries()) {
           const open = () => { state.skill = s.name; render(); };
+          const box = el("input", { type: "checkbox", "aria-label": `Select ${s.name}`, checked: selected.has(s.name) ? true : null });
+          box.addEventListener("click", (e) => e.stopPropagation());
+          box.addEventListener("change", () => { box.checked ? selected.add(s.name) : selected.delete(s.name); syncDeleteBtn(); });
+          const del = el("button", { class: "btn small danger", title: `Delete ${s.name}`, "aria-label": `Delete ${s.name}`, onclick: async (e) => {
+            e.stopPropagation();
+            if (!confirm(`Delete '${s.name}'? Versions, files, tags and assignments go with it. This cannot be undone.`)) return;
+            try { await api(`/api/skills/${encodeURIComponent(s.name)}`, { method: "DELETE", body: "{}" }); toast(`Deleted ${s.name}`); render(); }
+            catch (e2) { toast(e2.message, true); }
+          } }, "Delete");
           out.push(el("tr", { class: "row", tabindex: "0", onclick: open, onkeydown: (e) => { if (e.key === "Enter") open(); } },
+            el("td", { class: "cell-check" }, box),
             el("td", { class: "idx" }, String(i + 1).padStart(2, "0")),
             el("td", { class: "name" }, s.name),
             el("td", { class: "col-desc" }, tagChips(s.tags || [])),
             el("td", { class: "num" }, s.current_semver || "—"),
             el("td", {}, pill(s.status)),
             el("td", { class: "num right" }, s.updated_at?.slice(0, 10) || ""),
-            el("td", { class: "num right muted" }, "→")));
+            el("td", { class: "num right muted" }, "→"),
+            el("td", { class: "right" }, del)));
         }
       }
       tableBody.replaceChildren(...out);
+      syncDeleteBtn();
     };
-    search.addEventListener("input", draw);
-    statusFilter.addEventListener("change", draw);
-    catFilter.addEventListener("change", draw);
+    search.addEventListener("input", () => { drawMenu(); draw(); });
+    statusFilter.addEventListener("change", () => { drawMenu(); draw(); });
+    drawMenu();
     draw();
 
     app.replaceChildren(
       el("div", { class: "page-head" }, el("h1", {}, "Skills"), el("span", { class: "count" }, `${skills.length} records`),
-        el("div", { class: "actions" }, el("button", { class: "btn primary", onclick: () => newSkillDialog(cats) }, "New skill"))),
-      el("div", { class: "toolbar" }, search, statusFilter, catFilter),
-      tags.filter((t) => t.skill_count > 0).length ? tagBar : "",
-      el("table", { class: "ledger" },
-        el("thead", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "Skill"), el("th", { class: "col-desc" }, "Tags"), el("th", {}, "Version"), el("th", {}, "Status"), el("th", { class: "right" }, "Updated"), el("th", {}, ""))),
-        tableBody),
+        el("div", { class: "actions" }, deleteBtn, selCount, el("button", { class: "btn primary", onclick: () => newSkillDialog(cats) }, "New skill"))),
+      el("div", { class: "split-menu" },
+        menu,
+        el("div", {},
+          el("div", { class: "toolbar" }, search, statusFilter),
+          el("table", { class: "ledger" },
+            el("thead", {}, el("tr", {}, el("th", { class: "cell-check" }), el("th", {}, ""), el("th", {}, "Skill"), el("th", { class: "col-desc" }, "Tags"), el("th", {}, "Version"), el("th", {}, "Status"), el("th", { class: "right" }, "Updated"), el("th", {}, ""), el("th", {}, ""))),
+            tableBody))),
     );
   } catch (e) { app.replaceChildren(errorPanel(e)); }
 }
@@ -378,6 +429,9 @@ async function viewTaxonomy(app) {
   try {
     const [cats, cols, tags, skills] = await Promise.all([api("/api/categories"), api("/api/collections"), api("/api/tags"), api("/api/skills")]);
     const nameOf = (id) => skills.find((s) => s.id === id)?.name || `#${id}`;
+    // deep link into the Skills view with this grouping preselected
+    const openCat = (id) => { sessionStorage.setItem("skills_filter_cat", String(id)); location.hash = "skills"; };
+    const openTag = (t) => { sessionStorage.setItem("skills_filter_tag", t); location.hash = "skills"; };
 
     const catName = el("input", { type: "text", placeholder: "backend" });
     const addCat = async () => {
@@ -398,8 +452,12 @@ async function viewTaxonomy(app) {
     // a category's member chips, aligned under the same anatomy as collections
     const catMembers = (c) => skills.filter((s) => s.category_id === c.id);
     const memberChips = (items) => items.length
-      ? el("td", { class: "col-desc" }, el("div", { class: "chips" }, ...items.slice(0, 4).map((s) => el("span", { class: "chip", onclick: () => { state.skill = s.name; state.page = "skills"; render(); } }, s.name)), items.length > 4 ? el("span", { class: "chip more" }, `+${items.length - 4}`) : ""))
+      ? el("td", { class: "col-desc" }, el("div", { class: "chips" }, ...items.slice(0, 4).map((s) => el("button", { class: "chip link", onclick: () => { state.skill = s.name; state.page = "skills"; location.hash = "skills"; render(); } }, s.name)), items.length > 4 ? el("span", { class: "chip more" }, `+${items.length - 4}`) : ""))
       : el("td", { class: "col-desc muted" }, "—");
+    const countCell = (n, onclick, title) => el("td", { class: "num right" },
+      onclick && n > 0
+        ? el("button", { class: "count-link num", onclick, title: title || `View the ${n} skill${n === 1 ? "" : "s"}` }, `${n} skill${n === 1 ? "" : "s"}`)
+        : el("span", { class: "num muted" }, `${n} skill${n === 1 ? "" : "s"}`));
 
     const catRow = (c, i) => {
       const items = catMembers(c);
@@ -407,20 +465,18 @@ async function viewTaxonomy(app) {
         el("td", { class: "idx" }, String(i + 1).padStart(2, "0")),
         el("td", { class: "name" }, c.name),
         memberChips(items),
-        el("td", { class: "num right" }, `${items.length} ${items.length === 1 ? "skill" : "skills"}`));
+        countCell(items.length, () => openCat(c.id)));
     };
     const colRow = (c, i) => el("tr", {},
       el("td", { class: "idx" }, String(i + 1).padStart(2, "0")),
       el("td", { class: "name" }, c.name),
       memberChips(c.skill_ids.map((id) => ({ id, name: nameOf(id) }))),
-      el("td", { class: "num right" }, `${c.skill_ids.length} ${c.skill_ids.length === 1 ? "skill" : "skills"}`));
+      countCell(c.skill_ids.length));
     const tagRow = (t, i) => el("tr", {},
       el("td", { class: "idx" }, String(i + 1).padStart(2, "0")),
-      el("td", {}, el("span", { class: "chip" }, t.name)),
-      el("td", { class: "num right" }, `${t.skill_count} ${t.skill_count === 1 ? "skill" : "skills"}`),
-      el("td", { class: "right" }, el("button", { class: "btn small danger", title: "Remove tag from all skills", onclick: async () => {
-        await api(`/api/tags/${t.id}`, { method: "DELETE" }); toast("Tag removed"); render();
-      } }, "Remove")));
+      el("td", {}, el("button", { class: "chip link", onclick: () => openTag(t.name) }, t.name)),
+      memberChips(skills.filter((s) => (s.tags || []).includes(t.name)).map((s) => ({ id: s.id, name: s.name }))),
+      countCell(t.skill_count, () => openTag(t.name)));
 
     app.replaceChildren(
       el("div", { class: "page-head" }, el("h1", {}, "Taxonomy"), el("span", { class: "count" }, "the units you file and assign skills with")),
@@ -445,7 +501,7 @@ async function viewTaxonomy(app) {
           el("div", { class: "form-row" }, el("div", {}, el("label", {}, "New tag"), tagName), el("button", { class: "btn primary", onclick: addTag }, "Add")),
           tags.length === 0 ? el("div", { class: "empty" }, el("strong", {}, "No tags yet"), "Tags like pdf or onboarding cut across categories.") :
           el("table", { class: "ledger" },
-            el("thead", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "Tag"), el("th", { class: "right" }, "Count"), el("th", {}, ""))),
+            el("thead", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "Tag"), el("th", { class: "col-desc" }, "Skills"), el("th", { class: "right" }, "Count"))),
             el("tbody", {}, ...tags.map(tagRow))))),
     );
   } catch (e) { app.replaceChildren(errorPanel(e)); }

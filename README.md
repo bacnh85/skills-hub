@@ -114,7 +114,7 @@ each trust boundary: [`docs/research.md`](docs/research.md).
 ```bash
 cp .pi/mcp.json.example .pi/mcp.json
 sed -i '' "s/\${SKILLS_MCP_TOKEN}/$(grep ^ADMIN_TOKEN= .env | cut -d= -f2)/" .pi/mcp.json
-pi mcp list        # expect: skills-mcp: connected, 5 tools
+pi mcp list        # expect: skills-hub: connected, 5 tools
 ```
 
 `.pi/mcp.json` is gitignored because it holds a token. Pi only loads a project

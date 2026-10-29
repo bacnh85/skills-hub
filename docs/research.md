@@ -44,7 +44,7 @@ of which the last two are MCP calls:
 4. **Run scripts** — execute a bundled script (we deliberately do **not** do this;
    see §6).
 
-The measured claim from skills-mcp is the important one: **embed only the
+The measured claim from the upstream skills-mcp project is the important one: **embed only the
 frontmatter** for search. Embedding full bodies pollutes the vector space with
 instruction prose that was never meant to be queried.
 

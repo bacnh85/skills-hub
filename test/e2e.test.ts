@@ -363,6 +363,36 @@ test("8. every earlier action is in the audit log", async () => {
   }
 });
 
+test("8b. delete: single + batch, assignments cleaned up", async () => {
+  // scaffold: two skills, one collection, one skill-kind assignment
+  const a = await api("/api/skills", { method: "POST", body: JSON.stringify({ name: "del-me-a", description: "x", body: "# A\n\nstep", semver: "0.1.0" }) });
+  const b = await api("/api/skills", { method: "POST", body: JSON.stringify({ name: "del-me-b", description: "x", body: "# B\n\nstep", semver: "0.1.0" }) });
+  assert.equal(a.status, 201);
+  assert.equal(b.status, 201);
+  const tok = await api("/api/tokens", { method: "POST", body: JSON.stringify({ name: "del-probe" }) });
+  const skills = await api("/api/skills");
+  const idA = skills.body.find((s: any) => s.name === "del-me-a").id;
+  const idB = skills.body.find((s: any) => s.name === "del-me-b").id;
+  await api(`/api/tokens/${tok.body.id}/assignments`, { method: "PUT", body: JSON.stringify({ kind: "skill", target_id: idA }) });
+  await api("/api/collections", { method: "POST", body: JSON.stringify({ name: "del-pack", skill_ids: [idB] }) });
+
+  // single delete removes the skill AND its skill-kind assignment
+  const one = await api("/api/skills/del-me-a", { method: "DELETE", body: "{}" });
+  assert.equal(one.status, 200);
+  assert.equal((await api("/api/skills/del-me-a")).status, 404);
+  const assigns = await api(`/api/tokens/${tok.body.id}/assignments`);
+  assert.ok(!assigns.body.some((x: any) => x.kind === "skill" && x.target_id === idA), "skill assignment survived delete");
+
+  // batch delete removes the rest and reports missing names
+  const batch = await api("/api/skills/delete-batch", { method: "POST", body: JSON.stringify({ names: ["del-me-b", "del-me-ghost"] }) });
+  assert.equal(batch.status, 200);
+  assert.deepEqual(batch.body, { ok: true, deleted: 1, missing: ["del-me-ghost"] });
+  const cols = await api("/api/collections");
+  const pack = cols.body.find((c: any) => c.name === "del-pack");
+  assert.ok(pack, "collection itself survives");
+  assert.equal(pack.skill_ids.length, 0, "collection_items row should cascade away");
+});
+
 test("9. client-served endpoints honour PUBLIC_SKILL_ACCESS=false", async () => {
   const res = await fetch(`${BASE}/s/pdf-report/SKILL.md`);
   assert.equal(res.status, 401, "anonymous read must be refused when PUBLIC_SKILL_ACCESS is false");
