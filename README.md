@@ -117,11 +117,12 @@ sed -i '' "s/\${SKILLS_MCP_TOKEN}/$(grep ^ADMIN_TOKEN= .env | cut -d= -f2)/" .pi
 pi mcp list        # expect: skills-mcp: connected, 5 tools
 ```
 
-`.pi/mcp.json` is gitignored because it holds a token. Project MCP configs only
-load after the project is trusted, so run `/trust` (or add the path to
-`~/.pi/agent/trust.json`) the first time. Run `/reload` after changing servers —
-connections are established at session start, so a server added mid-session is
-not callable until then.
+`.pi/mcp.json` is gitignored because it holds a token. Pi only loads a project
+MCP config after the project is trusted: run `/trust` once in an interactive
+session (it saves the decision to `~/.pi/agent/trust.json`), start with
+`pi --approve` for a one-off, or set `defaultProjectTrust: "always"` to skip the
+prompt. Run `/reload` after changing servers — connections are established at
+session start, so a server added mid-session is not callable until then.
 
 `exposure` is set to `direct` so the model sees all five tools without a
 `tool_search` round trip. Switch it to `deferred` to keep the context lean and
