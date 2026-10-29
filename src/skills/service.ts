@@ -138,10 +138,13 @@ export function publishVersion(input: PublishInput): { ok: boolean; error?: stri
     }
 
     if (status === "approved") {
-      db.prepare("UPDATE skills SET current_version_id = ?, updated_at = datetime('now') WHERE id = ?").run(
-        versionId,
-        skill.id,
-      );
+      // An approved publish makes the skill current AND live. A skill that was
+      // left in draft (e.g. by a security flag) is not silently promoted.
+      const cur = db.prepare("SELECT status FROM skills WHERE id = ?").get(skill.id) as { status: string };
+      const nextStatus = cur.status === "deprecated" ? "deprecated" : "published";
+      db.prepare(
+        "UPDATE skills SET current_version_id = ?, status = ?, updated_at = datetime('now') WHERE id = ?",
+      ).run(versionId, nextStatus, skill.id);
     }
     audit(input.authorKind, input.authorTokenId ?? null, "skill.publish", {
       skill: input.skillName,
@@ -208,6 +211,36 @@ function resolveVersion(skillId: number, currentVersionId: number | null, pin: s
     .prepare("SELECT id, semver FROM skill_versions WHERE skill_id = ? AND semver = ? AND status = 'approved'")
     .get(skillId, want) as any;
   return v ?? null;
+}
+
+// Admin sessions (tokenId === null) see every published skill.
+export function resolveAllPublished(): ResolvedSkill[] {
+  const rows = db
+    .prepare(
+      `SELECT s.id, s.name, s.status, s.current_version_id, c.name AS category
+       FROM skills s LEFT JOIN categories c ON c.id = s.category_id
+       WHERE s.status = 'published' ORDER BY s.name`,
+    )
+    .all() as any[];
+  const out: ResolvedSkill[] = [];
+  for (const s of rows) {
+    const v = resolveVersion(s.id, s.current_version_id, "latest");
+    if (!v) continue;
+    const full = db.prepare("SELECT frontmatter_json FROM skill_versions WHERE id = ?").get(v.id) as any;
+    const fm = JSON.parse(full.frontmatter_json);
+    out.push({
+      skill_id: s.id,
+      name: s.name,
+      status: s.status,
+      category: s.category ?? null,
+      version_id: v.id,
+      semver: v.semver,
+      description: String(fm.description ?? ""),
+      frontmatter: fm,
+      pin: "latest",
+    });
+  }
+  return out;
 }
 
 export function resolveVisibleSkills(tokenId: number): ResolvedSkill[] {

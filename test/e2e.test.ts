@@ -217,6 +217,20 @@ test("4. MCP: per-token visibility, 3-tier disclosure, write scope enforcement",
   assert.equal(prev.body.length, 2);
 });
 
+test("4b. MCP with an ADMIN token is unscoped (sees the whole published catalog)", async () => {
+  const transport = new StreamableHTTPClientTransport(new URL(`${BASE}/mcp`), {
+    requestInit: { headers: { Authorization: `Bearer ${ADMIN}` } },
+  });
+  const client = new Client({ name: "e2e-admin", version: "1.0.0" });
+  await client.connect(transport);
+  const list = await client.callTool({ name: "skills_list", arguments: {} });
+  const names = JSON.parse((list as any).content[0].text).map((s: any) => s.name);
+  // every published skill, including ones no token is assigned to
+  assert.ok(names.includes("pdf-report"), `admin should see pdf-report, got ${names.join(",")}`);
+  assert.ok(names.includes("sql-query-writer"), `admin should see sql-query-writer, got ${names.join(",")}`);
+  await client.close();
+});
+
 test("5. npx-skills interop: .tgz serves a valid tarball with SKILL.md", async () => {
   const tokens = await api("/api/tokens");
   const ct = (await api("/api/tokens", { method: "POST", body: JSON.stringify({ name: "tgz-client", scopes: ["skills:read"] }) })).body.token;

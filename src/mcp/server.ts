@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { resolveVisibleSkills, getResolved, listVersionFiles, getVersionFile, publishVersion } from "../skills/service.ts";
+import { resolveVisibleSkills, resolveAllPublished, getResolved, listVersionFiles, getVersionFile, publishVersion } from "../skills/service.ts";
 import { hasScope, type Actor } from "../auth.ts";
 import { db, usageRow } from "../db.ts";
 import * as semver from "semver";
@@ -16,7 +16,8 @@ function buildMcpServer(actor: Actor): McpServer {
   );
 
   const tokenId = actor.kind === "token" ? actor.id : null;
-  const visible = () => resolveVisibleSkills(tokenId ?? 0);
+  // admin sessions are unscoped: they see the whole published catalog
+  const visible = () => (tokenId === null ? resolveAllPublished() : resolveVisibleSkills(tokenId));
 
   server.tool("skills_list", "List skills assigned to your token (name + description only)", {}, async () => {
     usageRow(tokenId, "skills_list");
@@ -132,14 +133,19 @@ function buildMcpServer(actor: Actor): McpServer {
           v = "0.1.0";
         }
       }
+      // Attribute the write to whoever actually made it: an admin session writes
+      // as an admin (auto-approved, like the REST API); a client token writes
+      // as a client and lands pending until an admin approves it.
+      const asAdmin = actor.kind === "admin";
       const r = publishVersion({
         skillName: name,
         semver: v,
         body: body_md,
         frontmatter: { description },
         files: files?.map((f) => ({ path: f.path, content: f.content })),
-        authorKind: "token",
-        authorTokenId: tokenId ?? undefined,
+        authorKind: asAdmin ? "admin" : "token",
+        authorTokenId: asAdmin ? undefined : tokenId ?? undefined,
+        source: asAdmin ? "manual" : "client",
         createIfMissing: true,
       });
       usageRow(tokenId, "skills_create", name, v);
@@ -153,11 +159,15 @@ function buildMcpServer(actor: Actor): McpServer {
           ],
         };
       }
+      const state = asAdmin ? "PUBLISHED" : "PENDING";
+      const tail = asAdmin
+        ? "The admin session published it immediately."
+        : "An admin must approve it before clients can see it.";
       return {
         content: [
           {
             type: "text",
-            text: `Skill '${name}' v${v} stored as PENDING (lint score ${r.lint?.score}/100). An admin must approve it before clients can see it.`,
+            text: `Skill '${name}' v${v} stored as ${state} (lint score ${r.lint?.score}/100). ${tail}`,
           },
         ],
       };

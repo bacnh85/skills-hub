@@ -105,3 +105,24 @@ npm test        # 9 end-to-end tests against a live server
 
 Design system: [`DESIGN.md`](DESIGN.md). Research notes and the reasoning behind
 each trust boundary: [`docs/research.md`](docs/research.md).
+
+## Use it from pi (or any MCP client)
+
+`.pi/mcp.json.example` is a ready config for [pi](https://pi.dev). Copy it to
+`.pi/mcp.json` and set the token:
+
+```bash
+cp .pi/mcp.json.example .pi/mcp.json
+sed -i '' "s/\${SKILLS_MCP_TOKEN}/$(grep ^ADMIN_TOKEN= .env | cut -d= -f2)/" .pi/mcp.json
+pi mcp list        # expect: skills-mcp: connected, 5 tools
+```
+
+`.pi/mcp.json` is gitignored because it holds a token. Project MCP configs only
+load after the project is trusted, so run `/trust` (or add the path to
+`~/.pi/agent/trust.json`) the first time. Run `/reload` after changing servers —
+connections are established at session start, so a server added mid-session is
+not callable until then.
+
+`exposure` is set to `direct` so the model sees all five tools without a
+`tool_search` round trip. Switch it to `deferred` to keep the context lean and
+load them on demand.
