@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "skills-mcp": {
+      "url": "http://172.30.55.32:8787/mcp",
+      "headers": { "Authorization": "Bearer ${SKILLS_MCP_TOKEN}" },
+      "description": "Local skills registry: list, search and read agent skills assigned to this token; propose new skills when the token has write scope.",
+      "exposure": "direct",
+      "timeout": 30
+    }
+  }
+}
