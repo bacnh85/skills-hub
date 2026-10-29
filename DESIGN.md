@@ -1,5 +1,5 @@
 ---
-version: alpha
+version: alpha.1
 name: Skills Hub
 description: A card catalog for agent skills — a ruled ledger, not a SaaS dashboard.
 colors:
@@ -16,6 +16,20 @@ colors:
   rust-soft: "#F6E5E1"
   inverse: "#1B2521"
   inverse-ink: "#EDEAE3"
+  dark:
+    paper: "#131A16"
+    surface: "#1A231E"
+    ink: "#E7E4DC"
+    ink-soft: "#CFD6D0"
+    rule: "#2A342D"
+    forest: "#93E0C4"
+    forest-soft: "#1C2D25"
+    amber: "#F2D084"
+    amber-soft: "#2E2614"
+    rust: "#F9CCBF"
+    rust-soft: "#3B231B"
+    inverse: "#0C120E"
+    inverse-ink: "#E7E4DC"
 typography:
   display:
     fontFamily: "IBM Plex Sans, system-ui, sans-serif"
@@ -66,6 +80,27 @@ numbering system, doing real work (row index), not ornament.
 | rust | `#8A3423` | errors, security flags, revoked |
 | inverse | `#1B2521` | the one dark band (header) |
 | inverse-ink | `#EDEAE3` | text on inverse |
+
+### Night ledger (dark theme)
+
+The same system on ink-black paper: `data-theme="dark"` on `<html>` overrides
+colour tokens only — structure, spacing, type, radius, elevation are untouched.
+Accents lift to brighter tints (forest `#93E0C4`, amber `#F2D084`, rust
+`#F9CCBF`) so thin text still clears APCA Lc ≥75; `color-scheme` flips so
+native controls follow. Default follows `prefers-color-scheme`; the toggle
+persists to `localStorage`.
+
+| Token | Hex | Use |
+|---|---|---|
+| paper | `#131A16` | page background — green-black ink desk |
+| surface | `#1A231E` | cards, panels |
+| ink | `#E7E4DC` | body text — warm paper-white, never pure white |
+| ink-soft | `#CFD6D0` | metadata, labels |
+| rule | `#2A342D` | hairlines between rows |
+| forest | `#58BB97` → `#93E0C4` | the single accent on dark |
+| amber | `#F2D084` | pending / needs-review |
+| rust | `#F9CCBF` | errors, revoked |
+| inverse | `#0C120E` | the darker band (header, toasts) |
 
 Support colors encode meaning only (status). They are never decorative.
 

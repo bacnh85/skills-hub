@@ -2,10 +2,11 @@
 @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
 
 :root {
+  color-scheme: light;
   --paper: #f5f2ec;
   --surface: #fcfaf6;
   --ink: #1f2b26;
-  --ink-soft: #5a6660;
+  --ink-soft: #515c56;
   --rule: #d9d3c7;
   --forest: #1a5a43;
   --forest-soft: #e2eee7;
@@ -53,9 +54,44 @@
 
   --el-sm: 0 1px 2px rgba(31, 43, 38, 0.06);
   --el-md: 0 8px 24px rgba(31, 43, 38, 0.12);
+  --backdrop: rgba(27, 37, 33, 0.42);
 
   --font-body: "IBM Plex Sans", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+/* night ledger — same system, ink-black paper. Overrides colour tokens only. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #131a16;
+  --surface: #1a231e;
+  --ink: #e7e4dc;
+  --ink-soft: #cfd6d0;
+  --rule: #2a342d;
+  --forest: #93e0c4;
+  --forest-soft: #1c2d25;
+  --amber: #f2d084;
+  --amber-soft: #2e2614;
+  --rust: #f9ccbf;
+  --rust-soft: #3b231b;
+  --inverse: #0c120e;
+  --inverse-ink: #e7e4dc;
+
+  --paper-deep: #0f1511;
+  --hover-surface: #212b25;
+  --active-surface: #27332b;
+  --row-hover: #1e2822;
+  --on-accent: #0a130e;
+  --forest-deep: #a9eed3;
+  --rule-strong: #55403a;
+  --placeholder: #77827a;
+  --index-numeral: #8b958d;
+  --published-rule: #2c463a;
+  --pending-rule: #4c3f1f;
+  --draft-surface: #212922;
+  --rust-rule: #5a372c;
+  --rust-deep: #55201a;
+  --backdrop: rgba(5, 8, 6, 0.6);
 }
 
 * {
@@ -99,9 +135,9 @@ h3 {
 .topbar .brand span {
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
-  color: var(--forest-soft);
+  color: var(--inverse-ink);
   margin-left: var(--sp-1);
-  opacity: 0.85;
+  opacity: 0.72;
 }
 .topbar nav {
   display: flex;
@@ -109,7 +145,8 @@ h3 {
   margin-left: auto;
   flex-wrap: wrap;
 }
-.topbar nav button {
+.topbar nav button,
+.topbar .tb-btn {
   background: transparent;
   border: 1px solid transparent;
   color: var(--inverse-ink);
@@ -119,7 +156,8 @@ h3 {
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
-.topbar nav button:hover {
+.topbar nav button:hover,
+.topbar .tb-btn:hover {
   background: rgba(237, 234, 227, 0.12);
 }
 .topbar nav button[aria-current="page"] {
@@ -193,6 +231,7 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 .topbar nav button:focus-visible,
+.topbar .tb-btn:focus-visible,
 tr.row:focus-visible {
   outline: 2px solid var(--forest);
   outline-offset: 2px;
@@ -718,7 +757,7 @@ pre.code {
 .backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(27, 37, 33, 0.42);
+  background: var(--backdrop);
   display: grid;
   place-items: center;
   z-index: 30;

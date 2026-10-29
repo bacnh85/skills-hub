@@ -5,11 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Skills Hub</title>
 <link rel="stylesheet" href="./styles.css" />
+<script>
+  // before CSS paints: restore saved theme, else follow the system
+  document.documentElement.dataset.theme =
+    localStorage.getItem("sp_theme") ||
+    (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+</script>
 </head>
 <body>
 <header class="topbar">
   <div class="brand">Skills Hub<span>central registry</span></div>
   <nav id="nav"></nav>
+  <button id="theme-toggle" class="tb-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">🌙</button>
 </header>
 <main id="app"></main>
 <script type="module" src="./app.js"></script>

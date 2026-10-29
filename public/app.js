@@ -21,6 +21,17 @@ const store = {
   set token(v) { v ? localStorage.setItem("sp_token", v) : localStorage.removeItem("sp_token"); },
 };
 
+// theme toggle — the inline <head> script owns first paint; this only flips + persists
+const themeBtn = document.getElementById("theme-toggle");
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  localStorage.setItem("sp_theme", t);
+  themeBtn.textContent = t === "dark" ? "☀️" : "🌙";
+}
+themeBtn.addEventListener("click", () =>
+  setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
+setTheme(document.documentElement.dataset.theme || "light");
+
 async function api(path, opts = {}) {
   const res = await fetch(path, {
     ...opts,
