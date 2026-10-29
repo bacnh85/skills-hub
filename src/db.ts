@@ -124,6 +124,17 @@ CREATE TABLE usage (
   skill_version TEXT
 );
 `,
+  2: `
+CREATE TABLE tags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE NOT NULL
+);
+CREATE TABLE skill_tags (
+  skill_id INTEGER NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+  tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  PRIMARY KEY (skill_id, tag_id)
+);
+`,
 };
 
 function loadMigrations(d: DatabaseSync) {

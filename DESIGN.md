@@ -1,6 +1,6 @@
 ---
 version: alpha
-name: Skills Portal
+name: Skills Hub
 description: A card catalog for agent skills — a ruled ledger, not a SaaS dashboard.
 colors:
   paper: "#F5F2EC"
@@ -38,7 +38,7 @@ components:
     radius: "{rounded.md}"
 ---
 
-# Skills Portal — Design System
+# Skills Hub — Design System
 
 ## Direction
 

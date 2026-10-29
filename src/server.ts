@@ -47,7 +47,7 @@ startAiWorker();
 startSourceScheduler();
 
 const welcome = {
-  name: "skills-portal",
+  name: "skills-hub",
   ui: "/ui/index.html",
   mcp: "/mcp (Authorization: Bearer ct_...)",
   health: "/healthz",
@@ -59,7 +59,7 @@ const start = async () => {
   try {
     await app.listen({ port: config.PORT, host: "0.0.0.0" });
     setBaseUrl(`http://localhost:${config.PORT}`);
-    console.log(`skills-portal listening on :${config.PORT} — UI at /ui/index.html, MCP at /mcp`);
+    console.log(`skills-hub listening on :${config.PORT} — UI at /ui/index.html, MCP at /mcp`);
   } catch (err) {
     app.log.error(err);
     process.exit(1);

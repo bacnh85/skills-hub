@@ -1,11 +1,11 @@
-/* Skills Portal — card-catalog ledger. Tokens first, nothing off-system. */
+/* Skills Hub — card-catalog ledger. Tokens first, nothing off-system. */
 @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
 
 :root {
   --paper: #f5f2ec;
   --surface: #fcfaf6;
   --ink: #1f2b26;
-  --ink-soft: #4d5852;
+  --ink-soft: #5a6660;
   --rule: #d9d3c7;
   --forest: #1a5a43;
   --forest-soft: #e2eee7;
@@ -271,7 +271,7 @@ label {
   text-align: left;
   font-size: var(--fs-xs);
   font-weight: 500;
-  color: var(--ink-soft);
+  color: var(--ink);
   padding: var(--sp-1) var(--sp-2);
   border-bottom: 1px solid var(--rule);
   background: var(--paper-deep);
@@ -344,7 +344,7 @@ label {
 }
 .pill.draft {
   background: var(--draft-surface);
-  color: var(--ink-soft);
+  color: var(--ink);
   border-color: var(--rule);
 }
 .pill.deprecated,
@@ -352,6 +352,70 @@ label {
   background: var(--rust-soft);
   color: var(--rust);
   border-color: var(--rust-rule);
+}
+
+/* ---------- tags & taxonomy ---------- */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  padding: 1px var(--sp-1);
+  border-radius: var(--radius-sm);
+  background: var(--paper-deep);
+  color: var(--ink);
+  white-space: nowrap;
+}
+.chip.more {
+  color: var(--placeholder);
+}
+button.chip {
+  cursor: pointer;
+  border: 1px solid transparent;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  padding: 1px var(--sp-1);
+  border-radius: var(--radius-sm);
+  background: var(--paper-deep);
+  color: var(--ink);
+}
+button.chip:hover {
+  background: var(--hover-surface);
+  color: var(--ink);
+}
+button.chip.on {
+  background: var(--forest-soft);
+  color: var(--forest);
+  border-color: var(--published-rule);
+}
+.tagbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--sp-2);
+}
+.group-row td {
+  background: var(--paper-deep);
+  padding: var(--sp-1) var(--sp-2);
+}
+.group-label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--index-numeral);
+}
+.tagline {
+  display: flex;
+  gap: var(--sp-1);
+  align-items: center;
+  flex: 1;
 }
 
 /* ---------- cards / panels ---------- */

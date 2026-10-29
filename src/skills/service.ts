@@ -29,6 +29,7 @@ export interface ResolvedSkill {
   name: string;
   status: string;
   category: string | null;
+  tags: string[];
   version_id: number;
   semver: string;
   description: string;
@@ -233,6 +234,7 @@ export function resolveAllPublished(): ResolvedSkill[] {
       name: s.name,
       status: s.status,
       category: s.category ?? null,
+      tags: tagsOf(s.id),
       version_id: v.id,
       semver: v.semver,
       description: String(fm.description ?? ""),
@@ -241,6 +243,12 @@ export function resolveAllPublished(): ResolvedSkill[] {
     });
   }
   return out;
+}
+
+export function tagsOf(skillId: number): string[] {
+  return (db
+    .prepare("SELECT t.name FROM skill_tags st JOIN tags t ON t.id = st.tag_id WHERE st.skill_id = ? ORDER BY t.name")
+    .all(skillId) as any[]).map((r) => r.name);
 }
 
 export function resolveVisibleSkills(tokenId: number): ResolvedSkill[] {
@@ -277,6 +285,7 @@ export function resolveVisibleSkills(tokenId: number): ResolvedSkill[] {
       name: s.name,
       status: s.status,
       category: s.category ?? null,
+      tags: tagsOf(s.id),
       version_id: v.id,
       semver: v.semver,
       description: String(fm.description ?? ""),
@@ -312,6 +321,7 @@ export function getResolved(skillName: string, version?: string): { resolved: Re
       name: s.name,
       status: s.status,
       category: s.category ?? null,
+      tags: tagsOf(s.id),
       version_id: v.id,
       semver: v.semver,
       description: String(JSON.parse(full.frontmatter_json).description ?? ""),

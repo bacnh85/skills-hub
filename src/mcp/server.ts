@@ -11,7 +11,7 @@ const PKG_VERSION = "0.1.0";
 
 function buildMcpServer(actor: Actor): McpServer {
   const server = new McpServer(
-    { name: "skills-portal", version: PKG_VERSION },
+    { name: "skills-hub", version: PKG_VERSION },
     { capabilities: { tools: { listChanged: true } } },
   );
 
@@ -26,7 +26,7 @@ function buildMcpServer(actor: Actor): McpServer {
         {
           type: "text",
           text: JSON.stringify(
-            visible().map((s) => ({ name: s.name, version: s.semver, description: s.description, category: s.category })),
+            visible().map((s) => ({ name: s.name, version: s.semver, description: s.description, category: s.category, tags: s.tags })),
             null,
             2,
           ),
@@ -43,6 +43,7 @@ function buildMcpServer(actor: Actor): McpServer {
         s.name.toLowerCase().includes(q) ||
         s.description.toLowerCase().includes(q) ||
         s.category?.toLowerCase().includes(q) ||
+        s.tags.some((t) => t.toLowerCase().includes(q)) ||
         JSON.stringify(s.frontmatter.metadata ?? {}).toLowerCase().includes(q),
     );
     return {
@@ -118,7 +119,7 @@ function buildMcpServer(actor: Actor): McpServer {
     async ({ name, description, body_md, version, files }) => {
       if (!hasScope(actor, "skills:write")) {
         usageRow(tokenId, "skills_create:denied", name);
-        return { content: [{ type: "text", text: "Error: your token does not have skills:write scope. Ask the portal admin to grant it." }] };
+        return { content: [{ type: "text", text: "Error: your token does not have skills:write scope. Ask the hub admin to grant it." }] };
       }
       // resolve default version
       let v = version;

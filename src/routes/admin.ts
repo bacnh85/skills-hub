@@ -24,6 +24,32 @@ function registerAdminRoutesInner(app: FastifyInstance) {
   app.get("/api/categories", async () =>
     db.prepare("SELECT * FROM categories ORDER BY name").all(),
   );
+  app.get("/api/tags", async () =>
+    db
+      .prepare(
+        `SELECT t.id, t.name, COUNT(st.skill_id) AS skill_count
+         FROM tags t LEFT JOIN skill_tags st ON st.tag_id = t.id
+         GROUP BY t.id ORDER BY t.name`,
+      )
+      .all(),
+  );
+  app.post("/api/tags", async (req, reply) => {
+    const p = z.object({ name: z.string().min(1).max(48) }).parse(req.body);
+    const name = p.name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
+    if (!name) return reply.code(400).send({ error: "tag needs letters or digits" });
+    const existing = db.prepare("SELECT id, name FROM tags WHERE name = ?").get(name) as any;
+    if (existing) return existing; // idempotent: adding an existing tag is fine
+    const r = db.prepare("INSERT INTO tags (name) VALUES (?)").run(name);
+    audit("admin", actor(req).id, "tag.create", { name });
+    reply.code(201);
+    return { id: Number(r.lastInsertRowid), name };
+  });
+  app.delete("/api/tags/:id", async (req) => {
+    const { id } = z.object({ id: z.coerce.number() }).parse((req as any).params);
+    db.prepare("DELETE FROM tags WHERE id = ?").run(id);
+    audit("admin", actor(req).id, "tag.delete", { id });
+    return { ok: true };
+  });
   app.post("/api/categories", async (req, reply) => {
     const p = z.object({ name: z.string().min(1).max(64), description: z.string().default("") }).parse(req.body);
     try {
@@ -90,7 +116,7 @@ function registerAdminRoutesInner(app: FastifyInstance) {
   // ---------- skills ----------
   app.get("/api/skills", async (req) => {
     const q = z
-      .object({ status: z.string().optional(), category_id: z.coerce.number().optional(), q: z.string().optional() })
+      .object({ status: z.string().optional(), category_id: z.coerce.number().optional(), tag: z.string().optional(), q: z.string().optional() })
       .parse((req as any).query);
     let sql = `SELECT s.id, s.name, s.status, s.source, s.category_id, c.name AS category, s.security_flags_json,
       s.current_version_id, v.semver AS current_semver, s.updated_at
@@ -110,8 +136,25 @@ function registerAdminRoutesInner(app: FastifyInstance) {
       sql += " AND s.name LIKE ?";
       args.push(`%${q.q}%`);
     }
+    if (q.tag) {
+      sql += " AND s.id IN (SELECT st.skill_id FROM skill_tags st JOIN tags t ON t.id = st.tag_id WHERE t.name = ?)";
+      args.push(q.tag.toLowerCase());
+    }
     sql += " ORDER BY s.name";
-    return db.prepare(sql).all(...args);
+    const rows = db.prepare(sql).all(...args) as any[];
+    if (rows.length === 0) return rows;
+    const tagRows = db
+      .prepare(
+        `SELECT st.skill_id, t.name FROM skill_tags st JOIN tags t ON t.id = st.tag_id
+         WHERE st.skill_id IN (${rows.map(() => "?").join(",")}) ORDER BY t.name`,
+      )
+      .all(...rows.map((r) => r.id)) as any[];
+    const bySkill = new Map<number, string[]>();
+    for (const t of tagRows) {
+      if (!bySkill.has(t.skill_id)) bySkill.set(t.skill_id, []);
+      bySkill.get(t.skill_id)!.push(t.name);
+    }
+    return rows.map((r) => ({ ...r, tags: bySkill.get(r.id) ?? [] }));
   });
 
   app.post("/api/skills", async (req, reply) => {
@@ -157,6 +200,9 @@ function registerAdminRoutesInner(app: FastifyInstance) {
       )
       .get(name) as any;
     if (!s) return reply.code(404).send({ error: "not found" });
+    const tags = (db
+      .prepare("SELECT t.name FROM skill_tags st JOIN tags t ON t.id = st.tag_id WHERE st.skill_id = ? ORDER BY t.name")
+      .all(s.id) as any[]).map((r) => r.name);
     const versions = db
       .prepare(
         `SELECT id, semver, status, author_kind, lint_score, source_url, created_at FROM skill_versions WHERE skill_id = ? ORDER BY created_at DESC, id DESC`,
@@ -168,6 +214,7 @@ function registerAdminRoutesInner(app: FastifyInstance) {
     return {
       ...s,
       security_flags: JSON.parse(s.security_flags_json ?? "[]"),
+      tags,
       versions,
       current: cur
         ? { body: cur.body, frontmatter: JSON.parse(cur.frontmatter_json), lint_report: JSON.parse(cur.lint_report_json), files: listVersionFiles(s.current_version_id) }
@@ -178,13 +225,35 @@ function registerAdminRoutesInner(app: FastifyInstance) {
   app.patch("/api/skills/:name", async (req, reply) => {
     const { name } = z.object({ name: z.string() }).parse((req as any).params);
     const p = z
-      .object({ category_id: z.number().nullable().optional(), status: z.enum(["draft", "published", "deprecated"]).optional() })
+      .object({
+        category_id: z.number().nullable().optional(),
+        status: z.enum(["draft", "published", "deprecated"]).optional(),
+        tags: z.array(z.string().min(1).max(48)).optional(),
+      })
       .parse(req.body);
     const s = db.prepare("SELECT id FROM skills WHERE name = ?").get(name) as any;
     if (!s) return reply.code(404).send({ error: "not found" });
     if (p.category_id !== undefined) db.prepare("UPDATE skills SET category_id = ? WHERE id = ?").run(p.category_id, s.id);
     if (p.status) db.prepare("UPDATE skills SET status = ?, updated_at = datetime('now') WHERE id = ?").run(p.status, s.id);
+    if (p.tags) {
+      db.prepare("DELETE FROM skill_tags WHERE skill_id = ?").run(s.id);
+      for (const raw of p.tags) {
+        const t = String(raw).toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
+        if (!t) continue;
+        let row = db.prepare("SELECT id FROM tags WHERE name = ?").get(t) as any;
+        if (!row) row = db.prepare("INSERT INTO tags (name) VALUES (?)").run(t);
+        db.prepare("INSERT OR IGNORE INTO skill_tags (skill_id, tag_id) VALUES (?,?)").run(s.id, Number(row.lastInsertRowid ?? row.id));
+      }
+    }
     audit("admin", actor(req).id, "skill.update", { name, ...p });
+    return { ok: true };
+  });
+
+  app.delete("/api/skills/:name/tags/:tag", async (req, reply) => {
+    const { name, tag } = z.object({ name: z.string(), tag: z.string() }).parse((req as any).params);
+    const s = db.prepare("SELECT id FROM skills WHERE name = ?").get(name) as any;
+    if (!s) return reply.code(404).send({ error: "not found" });
+    db.prepare("DELETE FROM skill_tags WHERE skill_id = ? AND tag_id = (SELECT id FROM tags WHERE name = ?)").run(s.id, tag.toLowerCase());
     return { ok: true };
   });
 
@@ -335,6 +404,7 @@ function registerAdminRoutesInner(app: FastifyInstance) {
       pending_versions: one("SELECT COUNT(*) n FROM skill_versions WHERE status = 'pending'"),
       categories: one("SELECT COUNT(*) n FROM categories"),
       collections: one("SELECT COUNT(*) n FROM collections"),
+      tags: one("SELECT COUNT(*) n FROM tags"),
       tokens: one("SELECT COUNT(*) n FROM tokens WHERE revoked_at IS NULL"),
       sources: one("SELECT COUNT(*) n FROM sources WHERE enabled = 1"),
       ai_configured: Boolean(config.AI_BASE_URL),

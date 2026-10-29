@@ -1,11 +1,11 @@
-# Skills Portal
+# Skills Hub
 
 One self-hosted registry for agent skills (`SKILL.md` folders), served to any
-MCP-capable agent with **per-token visibility**, plus an admin portal with
+MCP-capable agent with **per-token visibility**, plus an admin web UI with
 AI-assisted organisation and `npx skills`-style importing.
 
 - **MCP server** at `/mcp` — five tools, three-tier progressive disclosure
-- **Admin portal** at `/ui/index.html` — skills, categories, collections, tokens, sources, AI, audit
+- **Admin web UI** at `/ui/index.html` — skills, categories, collections, tokens, sources, AI, audit
 - **Client HTTP** — `GET /s/<name>/SKILL.md`, `GET /s/<name>.tgz`, `GET /c/<collection>.tgz`
 - **One process, one SQLite file, one volume.** Node 22+, no native deps.
 
@@ -41,7 +41,7 @@ Open `http://localhost:8787/ui/index.html` and paste the admin token.
 ## Connect an agent
 
 ```bash
-claude mcp add skills-portal --transport http \
+claude mcp add skills-hub --transport http \
   --header "Authorization: Bearer ct_…" \
   http://localhost:8787/mcp
 ```

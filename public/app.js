@@ -1,4 +1,4 @@
-// Skills Portal admin SPA — no build step, hash routing.
+// Skills Hub admin SPA — no build step, hash routing.
 const $ = (sel, root = document) => root.querySelector(sel);
 const el = (tag, attrs = {}, ...kids) => {
   const n = document.createElement(tag);
@@ -143,40 +143,72 @@ function errorPanel(e) {
 }
 
 // ---------- skills ----------
+function tagChips(tags) {
+  return el("div", { class: "chips" }, ...tags.map((t) => el("span", { class: "chip", title: `tag: ${t}` }, t)));
+}
+
 async function viewSkills(app) {
   if (state.skill) return viewSkillDetail(app, state.skill);
   app.replaceChildren(el("div", { class: "empty" }, "Reading the catalog…"));
   try {
-    const [skills, cats] = await Promise.all([api("/api/skills"), api("/api/categories")]);
-    const search = el("input", { type: "text", placeholder: "Filter by name…" });
+    const [skills, cats, tags] = await Promise.all([api("/api/skills"), api("/api/categories"), api("/api/tags")]);
+    const search = el("input", { type: "text", placeholder: "Filter by name or tag…" });
     const statusFilter = el("select", {}, el("option", { value: "" }, "all statuses"), ...["published", "draft", "deprecated"].map((s) => el("option", { value: s }, s)));
     const catFilter = el("select", {}, el("option", { value: "" }, "all categories"), ...cats.map((c) => el("option", { value: c.id }, c.name)));
+
+    // browse-by-tag: clicking a chip filters the view to that tag
+    let activeTag = "";
+    const tagBar = el("div", { class: "tagbar" });
+    const drawTagBar = () => {
+      tagBar.replaceChildren(
+        el("button", { class: `chip${activeTag === "" ? " on" : ""}`, onclick: () => { activeTag = ""; drawTagBar(); draw(); } }, "all tags"),
+        ...tags.filter((t) => t.skill_count > 0).map((t) =>
+          el("button", { class: `chip${activeTag === t.name ? " on" : ""}`, onclick: () => { activeTag = activeTag === t.name ? "" : t.name; drawTagBar(); draw(); } }, `${t.name} ${t.skill_count}`)),
+      );
+    };
+    drawTagBar();
 
     const tableBody = el("tbody");
     const draw = () => {
       const q = search.value.toLowerCase();
       const rows = skills.filter((s) =>
-        (!q || s.name.includes(q)) &&
+        (!q || s.name.toLowerCase().includes(q) || (s.tags || []).some((t) => t.includes(q))) &&
         (!statusFilter.value || s.status === statusFilter.value) &&
-        (!catFilter.value || String(s.category_id) === catFilter.value));
+        (!catFilter.value || String(s.category_id) === catFilter.value) &&
+        (!activeTag || (s.tags || []).includes(activeTag)));
       if (rows.length === 0) {
         tableBody.replaceChildren(
-          el("tr", {}, el("td", { colspan: 6 },
+          el("tr", {}, el("td", { colspan: 7 },
             el("div", { class: "empty" }, el("strong", {}, "No skills match"), "Adjust the filters, or create a skill or import a repo."))),
         );
         return;
       }
-      tableBody.replaceChildren(...rows.map((s, i) => {
-        const open = () => { state.skill = s.name; render(); };
-        return el("tr", { class: "row", tabindex: "0", onclick: open, onkeydown: (e) => { if (e.key === "Enter") open(); } },
-          el("td", { class: "idx" }, String(i + 1).padStart(2, "0")),
-          el("td", { class: "name" }, s.name),
-          el("td", { class: "col-desc desc" }, s.category || "—"),
-          el("td", { class: "num" }, s.current_semver || "—"),
-          el("td", {}, pill(s.status)),
-          el("td", { class: "num right" }, s.updated_at?.slice(0, 10) || ""),
-        );
-      }));
+      // grouped by category: flat rows lose the filing, a category order keeps related skills together
+      const byCat = new Map();
+      for (const r of rows) {
+        const key = r.category || "Uncategorized";
+        if (!byCat.has(key)) byCat.set(key, []);
+        byCat.get(key).push(r);
+      }
+      const ordered = [...byCat.entries()].sort((a, b) => (a[0] === "Uncategorized") - (b[0] === "Uncategorized") || a[0].localeCompare(b[0]));
+      const out = [];
+      for (const [cat, items] of ordered) {
+        out.push(el("tr", { class: "group-row" }, el("td", { colspan: 7 },
+          el("span", { class: "group-label" }, cat),
+          el("span", { class: "muted" }, ` ${items.length} skill${items.length === 1 ? "" : "s"}`))));
+        for (const [i, s] of items.entries()) {
+          const open = () => { state.skill = s.name; render(); };
+          out.push(el("tr", { class: "row", tabindex: "0", onclick: open, onkeydown: (e) => { if (e.key === "Enter") open(); } },
+            el("td", { class: "idx" }, String(i + 1).padStart(2, "0")),
+            el("td", { class: "name" }, s.name),
+            el("td", { class: "col-desc" }, tagChips(s.tags || [])),
+            el("td", { class: "num" }, s.current_semver || "—"),
+            el("td", {}, pill(s.status)),
+            el("td", { class: "num right" }, s.updated_at?.slice(0, 10) || ""),
+            el("td", { class: "num right muted" }, "→")));
+        }
+      }
+      tableBody.replaceChildren(...out);
     };
     search.addEventListener("input", draw);
     statusFilter.addEventListener("change", draw);
@@ -187,8 +219,9 @@ async function viewSkills(app) {
       el("div", { class: "page-head" }, el("h1", {}, "Skills"), el("span", { class: "count" }, `${skills.length} records`),
         el("div", { class: "actions" }, el("button", { class: "btn primary", onclick: () => newSkillDialog(cats) }, "New skill"))),
       el("div", { class: "toolbar" }, search, statusFilter, catFilter),
+      tags.filter((t) => t.skill_count > 0).length ? tagBar : "",
       el("table", { class: "ledger" },
-        el("thead", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "Skill"), el("th", { class: "col-desc" }, "Category"), el("th", {}, "Version"), el("th", {}, "Status"), el("th", { class: "right" }, "Updated"))),
+        el("thead", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "Skill"), el("th", { class: "col-desc" }, "Tags"), el("th", {}, "Version"), el("th", {}, "Status"), el("th", { class: "right" }, "Updated"), el("th", {}, ""))),
         tableBody),
     );
   } catch (e) { app.replaceChildren(errorPanel(e)); }
@@ -199,6 +232,7 @@ function newSkillDialog(cats) {
   const desc = el("input", { type: "text", placeholder: "What it does. Use when …" });
   const body = el("textarea", { placeholder: "# Instructions\n\n1. …" });
   const cat = el("select", {}, el("option", { value: "" }, "uncategorized"), ...cats.map((c) => el("option", { value: c.id }, c.name)));
+  const tagsIn = el("input", { type: "text", placeholder: "pdf, reporting, onboarding" });
   const ver = el("input", { type: "text", value: "0.1.0" });
   const close = () => backdrop.remove();
   const save = async () => {
@@ -207,6 +241,8 @@ function newSkillDialog(cats) {
         name: name.value.trim(), description: desc.value.trim(), body: body.value,
         category_id: cat.value ? Number(cat.value) : null, semver: ver.value.trim() || "0.1.0", publish: true,
       }) });
+      const tagList = tagsIn.value.split(",").map((t) => t.trim()).filter(Boolean);
+      if (tagList.length) await api(`/api/skills/${encodeURIComponent(name.value.trim())}`, { method: "PATCH", body: JSON.stringify({ tags: tagList }) });
       close(); toast(`Skill '${name.value.trim()}' created`); render();
     } catch (e) { toast(e.message, true); }
   };
@@ -215,6 +251,7 @@ function newSkillDialog(cats) {
       el("h2", { style: "margin-bottom:16px" }, "New skill"),
       el("div", { class: "form-row" }, el("div", {}, el("label", {}, "Name"), name), el("div", {}, el("label", {}, "Version"), ver)),
       el("div", { class: "form-row" }, el("div", {}, el("label", {}, "Description"), desc)),
+      el("div", { class: "form-row" }, el("div", {}, el("label", {}, "Tags (comma-separated)"), tagsIn)),
       el("div", { class: "form-row" }, el("div", {}, el("label", {}, "Category"), cat)),
       el("div", { class: "form-row" }, el("div", {}, el("label", {}, "SKILL.md body"), body)),
       el("div", { class: "checkline", style: "justify-content:flex-end;gap:8px" },
@@ -240,6 +277,12 @@ async function viewSkillDetail(app, name) {
       await api(`/api/skills/${encodeURIComponent(name)}`, { method: "PATCH", body: JSON.stringify({ status: statusSel.value }) });
       toast("Status updated"); render();
     });
+    const tagsIn = el("input", { type: "text", value: (s.tags || []).join(", "), placeholder: "pdf, reporting" });
+    const saveTags = async () => {
+      await api(`/api/skills/${encodeURIComponent(name)}`, { method: "PATCH", body: JSON.stringify({ tags: tagsIn.value.split(",").map((t) => t.trim()).filter(Boolean) }) });
+      toast("Tags saved");
+    };
+    tagsIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveTags(); } });
 
     const versionRows = s.versions.map((v, i) => el("tr", { class: "row" },
       el("td", { class: "idx" }, String(i + 1).padStart(2, "0")),
@@ -273,6 +316,7 @@ async function viewSkillDetail(app, name) {
             el("dt", {}, "Created"), el("dd", {}, s.created_at),
             el("dt", {}, "Updated"), el("dd", {}, s.updated_at)),
           el("div", { class: "form-row", style: "margin-top:24px" }, el("div", {}, el("label", {}, "Category"), catSel)),
+          el("div", { class: "form-row" }, el("div", { class: "tagline" }, el("label", {}, "Tags"), tagsIn, el("button", { class: "btn small", onclick: saveTags }, "Save"))),
           el("div", { class: "form-row" }, el("div", {}, el("label", {}, "Status"), statusSel)),
         ),
         el("div", { class: "panel" },
@@ -328,11 +372,13 @@ async function viewPending(app) {
   } catch (e) { app.replaceChildren(errorPanel(e)); }
 }
 
-// ---------- taxonomy: categories + collections ----------
+// ---------- taxonomy: categories + collections + tags, one aligned system ----------
 async function viewTaxonomy(app) {
   app.replaceChildren(el("div", { class: "empty" }, "Reading taxonomy…"));
   try {
-    const [cats, cols] = await Promise.all([api("/api/categories"), api("/api/collections")]);
+    const [cats, cols, tags, skills] = await Promise.all([api("/api/categories"), api("/api/collections"), api("/api/tags"), api("/api/skills")]);
+    const nameOf = (id) => skills.find((s) => s.id === id)?.name || `#${id}`;
+
     const catName = el("input", { type: "text", placeholder: "backend" });
     const addCat = async () => {
       try { await api("/api/categories", { method: "POST", body: JSON.stringify({ name: catName.value.trim() }) }); catName.value = ""; toast("Category added"); render(); }
@@ -343,28 +389,67 @@ async function viewTaxonomy(app) {
       try { await api("/api/collections", { method: "POST", body: JSON.stringify({ name: colName.value.trim() }) }); colName.value = ""; toast("Collection added"); render(); }
       catch (e) { toast(e.message, true); }
     };
+    const tagName = el("input", { type: "text", placeholder: "pdf" });
+    const addTag = async () => {
+      try { await api("/api/tags", { method: "POST", body: JSON.stringify({ name: tagName.value.trim() }) }); tagName.value = ""; toast("Tag added"); render(); }
+      catch (e) { toast(e.message, true); }
+    };
+
+    // a category's member chips, aligned under the same anatomy as collections
+    const catMembers = (c) => skills.filter((s) => s.category_id === c.id);
+    const memberChips = (items) => items.length
+      ? el("td", { class: "col-desc" }, el("div", { class: "chips" }, ...items.slice(0, 4).map((s) => el("span", { class: "chip", onclick: () => { state.skill = s.name; state.page = "skills"; render(); } }, s.name)), items.length > 4 ? el("span", { class: "chip more" }, `+${items.length - 4}`) : ""))
+      : el("td", { class: "col-desc muted" }, "—");
+
+    const catRow = (c, i) => {
+      const items = catMembers(c);
+      return el("tr", {},
+        el("td", { class: "idx" }, String(i + 1).padStart(2, "0")),
+        el("td", { class: "name" }, c.name),
+        memberChips(items),
+        el("td", { class: "num right" }, `${items.length} ${items.length === 1 ? "skill" : "skills"}`));
+    };
+    const colRow = (c, i) => el("tr", {},
+      el("td", { class: "idx" }, String(i + 1).padStart(2, "0")),
+      el("td", { class: "name" }, c.name),
+      memberChips(c.skill_ids.map((id) => ({ id, name: nameOf(id) }))),
+      el("td", { class: "num right" }, `${c.skill_ids.length} ${c.skill_ids.length === 1 ? "skill" : "skills"}`));
+    const tagRow = (t, i) => el("tr", {},
+      el("td", { class: "idx" }, String(i + 1).padStart(2, "0")),
+      el("td", {}, el("span", { class: "chip" }, t.name)),
+      el("td", { class: "num right" }, `${t.skill_count} ${t.skill_count === 1 ? "skill" : "skills"}`),
+      el("td", { class: "right" }, el("button", { class: "btn small danger", title: "Remove tag from all skills", onclick: async () => {
+        await api(`/api/tags/${t.id}`, { method: "DELETE" }); toast("Tag removed"); render();
+      } }, "Remove")));
+
     app.replaceChildren(
-      el("div", { class: "page-head" }, el("h1", {}, "Categories & collections"), el("span", { class: "count" }, "the units you assign to tokens")),
+      el("div", { class: "page-head" }, el("h1", {}, "Taxonomy"), el("span", { class: "count" }, "the units you file and assign skills with")),
+      el("div", { class: "panel" },
+        el("h2", {}, "Categories"),
+        el("p", { class: "muted", style: "margin:4px 0 16px" }, "The filing system — every skill sits in exactly one category. Assigning a category to a token grants all of its skills."),
+        el("div", { class: "form-row" }, el("div", {}, el("label", {}, "New category"), catName), el("button", { class: "btn primary", onclick: addCat }, "Add")),
+        cats.length === 0 ? el("div", { class: "empty" }, el("strong", {}, "No categories yet"), "Add one above, or let the AI desk sort skills for you.") :
+        el("table", { class: "ledger" },
+          el("thead", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "Category"), el("th", { class: "col-desc" }, "Skills"), el("th", { class: "right" }, "Count"))),
+          el("tbody", {}, ...cats.map(catRow)))),
       el("div", { class: "split" },
-        el("div", { class: "panel" }, el("h2", {}, "Categories"),
-          el("div", { class: "form-row" }, el("div", {}, el("label", {}, "New category"), catName), el("button", { class: "btn primary", onclick: addCat }, "Add")),
-          cats.length === 0 ? el("div", { class: "empty" }, el("strong", {}, "No categories yet"), "Categories group skills; assigning a category to a token grants all of them.") :
-          el("table", { class: "ledger" }, el("tbody", {}, ...cats.map((c, i) => el("tr", {},
-            el("td", { class: "idx" }, String(i + 1).padStart(2, "0")),
-            el("td", { class: "name" }, c.name),
-            el("td", { class: "num right" }, `#${c.id}`)))))),
         el("div", { class: "panel" }, el("h2", {}, "Collections"),
+          el("p", { class: "muted", style: "margin:4px 0 16px" }, "Named bundles across categories — assign a whole pack to a token as one unit, or serve it as a single .tgz archive."),
           el("div", { class: "form-row" }, el("div", {}, el("label", {}, "New collection"), colName), el("button", { class: "btn primary", onclick: addCol }, "Add")),
           cols.length === 0 ? el("div", { class: "empty" }, el("strong", {}, "No collections yet"), "A collection is a named bundle of skills you assign as one unit.") :
-          el("table", { class: "ledger" }, el("tbody", {}, ...cols.map((c, i) => el("tr", {},
-            el("td", { class: "idx" }, String(i + 1).padStart(2, "0")),
-            el("td", { class: "name" }, c.name),
-            el("td", { class: "num right" }, `${c.skill_ids.length} skills`)))))),
-      ),
+          el("table", { class: "ledger" },
+            el("thead", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "Collection"), el("th", { class: "col-desc" }, "Skills"), el("th", { class: "right" }, "Count"))),
+            el("tbody", {}, ...cols.map(colRow)))),
+        el("div", { class: "panel" }, el("h2", {}, "Tags"),
+          el("p", { class: "muted", style: "margin:4px 0 16px" }, "Cross-cutting labels — a skill can carry many, and agents can search by them over MCP."),
+          el("div", { class: "form-row" }, el("div", {}, el("label", {}, "New tag"), tagName), el("button", { class: "btn primary", onclick: addTag }, "Add")),
+          tags.length === 0 ? el("div", { class: "empty" }, el("strong", {}, "No tags yet"), "Tags like pdf or onboarding cut across categories.") :
+          el("table", { class: "ledger" },
+            el("thead", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "Tag"), el("th", { class: "right" }, "Count"), el("th", {}, ""))),
+            el("tbody", {}, ...tags.map(tagRow))))),
     );
   } catch (e) { app.replaceChildren(errorPanel(e)); }
 }
-
 // ---------- tokens + assignment matrix ----------
 async function viewTokens(app) {
   if (state.token) return viewTokenDetail(app, state.token);
@@ -493,8 +578,8 @@ async function viewTokenDetail(app, tokenId) {
         el("p", { class: "muted", style: "margin-top:0" }, "The token value is only shown at creation. If it is lost, revoke this token and issue a new one."),
         el("div", { class: "snippet", style: "margin-bottom:16px" },
           el("label", {}, "Claude Code / pi (MCP)"),
-          el("pre", { class: "code" }, `claude mcp add skills-portal --transport http \\\n  --header "Authorization: Bearer ct_…" \\\n  ${location.origin}/mcp`),
-          el("button", { class: "btn small", onclick: (e) => { navigator.clipboard.writeText(`claude mcp add skills-portal --transport http --header "Authorization: Bearer ct_…" ${location.origin}/mcp`); toast("Copied"); } }, "Copy")),
+          el("pre", { class: "code" }, `claude mcp add skills-hub --transport http \\\n  --header "Authorization: Bearer ct_…" \\\n  ${location.origin}/mcp`),
+          el("button", { class: "btn small", onclick: (e) => { navigator.clipboard.writeText(`claude mcp add skills-hub --transport http --header "Authorization: Bearer ct_…" ${location.origin}/mcp`); toast("Copied"); } }, "Copy")),
         el("div", { class: "snippet" },
           el("label", {}, "npx skills (direct install)"),
           el("pre", { class: "code" }, `npx skills add ${location.origin}/s/<skill-name>.tgz`),
@@ -607,7 +692,7 @@ async function viewAi(app) {
         aiReady
           ? el("p", { class: "muted", style: "margin-top:0" }, "Suggestions are proposals; apply them explicitly. Nothing changes until you do.")
           : el("div", { class: "error-banner", style: "margin-bottom:16px" },
-              "AI is not configured on this server. Set AI_BASE_URL to an OpenAI-compatible endpoint (Ollama works: http://localhost:11434/v1) and restart. Everything else in the portal works without it."),
+              "AI is not configured on this server. Set AI_BASE_URL to an OpenAI-compatible endpoint (Ollama works: http://localhost:11434/v1) and restart. Everything else in the hub works without it."),
         el("div", { class: "checkline", style: "gap:8px" },
           el("button", { class: "btn primary", disabled: !aiReady, title: aiReady ? null : "AI_BASE_URL is not set", onclick: () => run("categorize") }, "Sort into categories"),
           el("button", { class: "btn", disabled: !aiReady, title: aiReady ? null : "AI_BASE_URL is not set", onclick: () => run("dedupe_review") }, "Review duplicates"),

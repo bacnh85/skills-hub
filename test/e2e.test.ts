@@ -101,6 +101,32 @@ test("2. create category + skill, lint score recorded", async () => {
   assert.equal(detail.body.current.files.length, 1);
 });
 
+test("2b. tags: set via PATCH, normalized, searchable via /api/tags, filterable", async () => {
+  const set = await api("/api/skills/pdf-report", {
+    method: "PATCH",
+    body: JSON.stringify({ tags: ["PDF", "reporting", "pdf"] }),
+  });
+  assert.equal(set.status, 200);
+  const detail = await api("/api/skills/pdf-report");
+  assert.deepEqual(detail.body.tags, ["pdf", "reporting"]); // deduped + lowercased
+
+  const list = await api("/api/tags");
+  assert.ok(list.body.some((t: any) => t.name === "pdf" && t.skill_count === 1));
+  assert.ok(list.body.some((t: any) => t.name === "reporting"));
+
+  const filtered = await api("/api/skills?tag=pdf");
+  assert.equal(filtered.body.length, 1);
+  assert.equal(filtered.body[0].name, "pdf-report");
+
+  // remove one tag via PATCH, then check the list shrank
+  await api("/api/skills/pdf-report", { method: "PATCH", body: JSON.stringify({ tags: ["pdf"] }) });
+  const after = await api("/api/skills/pdf-report");
+  assert.deepEqual(after.body.tags, ["pdf"]);
+
+  const dup = await api("/api/tags", { method: "POST", body: JSON.stringify({ name: "pdf" }) });
+  assert.equal(dup.status, 200); // idempotent
+});
+
 test("3. token assignment + version pinning resolution", async () => {
   const tok = await api("/api/tokens", { method: "POST", body: JSON.stringify({ name: "proj-alpha", scopes: ["skills:read"] }) });
   assert.match(tok.body.token, /^ct_/);
