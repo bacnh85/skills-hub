@@ -734,6 +734,23 @@ pre.code {
   max-height: 86vh;
   overflow: auto;
 }
+.confirm-modal {
+  width: min(460px, 100%);
+}
+.confirm-modal h2 {
+  font-size: var(--fs-lg);
+  margin-bottom: var(--sp-1);
+}
+.confirm-body {
+  margin: 0 0 var(--sp-3);
+  color: var(--ink-soft);
+  line-height: 1.55;
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-1);
+}
 
 /* the one page-load reveal */
 @media (prefers-reduced-motion: no-preference) {

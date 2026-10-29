@@ -42,6 +42,24 @@ function toast(msg, isErr = false) {
   toastTimer = setTimeout(() => t.remove(), 4200);
 }
 
+// in-app confirm dialog (native confirm() is blocked-looking and unstylable)
+function confirmDialog(title, body, confirmLabel = "Confirm") {
+  return new Promise((resolve) => {
+    const close = (v) => { backdrop.remove(); document.removeEventListener("keydown", onKey); resolve(v); };
+    const onKey = (e) => { if (e.key === "Escape") close(false); };
+    const cancel = el("button", { class: "btn", onclick: () => close(false) }, "Cancel");
+    const ok = el("button", { class: "btn danger", onclick: () => close(true) }, confirmLabel);
+    const backdrop = el("div", { class: "backdrop", onclick: (e) => { if (e.target === backdrop) close(false); } },
+      el("div", { class: "modal confirm-modal", role: "alertdialog", "aria-modal": "true", "aria-label": title },
+        el("h2", {}, title),
+        el("p", { class: "confirm-body" }, body),
+        el("div", { class: "confirm-actions" }, cancel, ok)));
+    document.body.append(backdrop);
+    document.addEventListener("keydown", onKey);
+    ok.focus();
+  });
+}
+
 const PAGES = [
   ["dashboard", "Overview"],
   ["skills", "Skills"],
@@ -199,7 +217,14 @@ async function viewSkills(app) {
     };
     async function deleteSelected() {
       const n = selected.size;
-      if (!confirm(`Delete ${n === 1 ? "'" + [...selected][0] + "'" : n + " skills"}? Versions, files, tags and assignments go with them. This cannot be undone.`)) return;
+      const names = [...selected];
+      const what = n === 1 ? `'${names[0]}'` : `${n} skills`;
+      const detail = n === 1
+        ? `Versions, files, tags and assignments for '${names[0]}' go with it. This cannot be undone.`
+        : el("span", {}, `Versions, files, tags and assignments for all ${n} go with them. This cannot be undone.`,
+            el("div", { class: "chips", style: "margin-top:8px" }, ...names.slice(0, 8).map((x) => el("span", { class: "chip" }, x)),
+              n > 8 ? el("span", { class: "chip more" }, `+${n - 8}`) : ""));
+      if (!(await confirmDialog(`Delete ${what}?`, detail, `Delete ${what}`))) return;
       try {
         const r = await api("/api/skills/delete-batch", { method: "POST", body: JSON.stringify({ names: [...selected] }) });
         toast(`Deleted ${r.deleted} skill${r.deleted === 1 ? "" : "s"}`);
@@ -240,7 +265,7 @@ async function viewSkills(app) {
           box.addEventListener("change", () => { box.checked ? selected.add(s.name) : selected.delete(s.name); syncDeleteBtn(); });
           const del = el("button", { class: "btn small danger", title: `Delete ${s.name}`, "aria-label": `Delete ${s.name}`, onclick: async (e) => {
             e.stopPropagation();
-            if (!confirm(`Delete '${s.name}'? Versions, files, tags and assignments go with it. This cannot be undone.`)) return;
+            if (!(await confirmDialog(`Delete '${s.name}'?`, "Versions, files, tags and assignments for this skill go with it. This cannot be undone.", "Delete skill"))) return;
             try { await api(`/api/skills/${encodeURIComponent(s.name)}`, { method: "DELETE", body: "{}" }); toast(`Deleted ${s.name}`); render(); }
             catch (e2) { toast(e2.message, true); }
           } }, "Delete");
@@ -581,8 +606,9 @@ async function viewTokenDetail(app, tokenId) {
     };
 
     const revoke = async () => {
-      if (!confirm(`Revoke '${tok.name}'? Any agent using it stops working immediately.`)) return;
-      await api(`/api/tokens/${tokenId}`, { method: "DELETE" });
+      const ok = await confirmDialog(`Revoke '${tok.name}'?`, "Any agent using it stops working immediately.", "Revoke token");
+      if (!ok) return;
+      await api(`/api/tokens/${tokenId}`, { method: "DELETE", body: "{}" });
       toast("Token revoked"); go("tokens");
     };
 
