@@ -1,17 +1,18 @@
 services:
-  skills-portal:
-    build: .
+  skills-hub:
+    image: ghcr.io/bacnh85/skills-hub:latest
+    # build: .            # uncomment to build locally instead of pulling
+    restart: unless-stopped
     ports:
       - "8787:8787"
     volumes:
       - portal-data:/app/data
     environment:
       - PORT=8787
-      # - BASE_URL=https://skills.example.com
-      # - ADMIN_TOKEN=sk_your_fixed_token
+      # - ADMIN_TOKEN=sk_your_fixed_token      # otherwise generated and printed once at first boot
+      # - PUBLIC_SKILL_ACCESS=false
       # - AI_BASE_URL=http://host.docker.internal:11434/v1
       # - AI_MODEL=llama3.1
       # - GITHUB_TOKEN=ghp_xxx
-      # - PUBLIC_SKILL_ACCESS=false
 volumes:
   portal-data:
