@@ -425,3 +425,25 @@ test("9. client-served endpoints honour PUBLIC_SKILL_ACCESS=false", async () => 
   const res = await fetch(`${BASE}/s/pdf-report/SKILL.md`);
   assert.equal(res.status, 401, "anonymous read must be refused when PUBLIC_SKILL_ACCESS is false");
 });
+
+test("10. revoked token: detail still loads, purge deletes it, purge of active is refused", async () => {
+  const tok = await api("/api/tokens", { method: "POST", body: JSON.stringify({ name: "purge-probe" }) });
+  const id = tok.body.id;
+  await api(`/api/tokens/${id}/assignments`, { method: "PUT", body: JSON.stringify({ kind: "skill", target_id: 1 }) });
+
+  // revoke, then the detail endpoints must still answer (was: preview 404'd "token not found")
+  await api(`/api/tokens/${id}`, { method: "DELETE", body: "{}" });
+  assert.equal((await api(`/api/tokens/${id}/preview`)).status, 200, "revoked token preview must not 404");
+  assert.equal((await api(`/api/tokens/${id}/assignments`)).status, 200);
+
+  // purging an active token is refused; purging the revoked one hard-deletes with its assignments
+  const active = await api("/api/tokens", { method: "POST", body: JSON.stringify({ name: "purge-active" }) });
+  const refusal = await api(`/api/tokens/${active.body.id}/purge`, { method: "DELETE", body: "{}" });
+  assert.equal(refusal.status, 409, "active token must not be purgeable");
+
+  const purge = await api(`/api/tokens/${id}/purge`, { method: "DELETE", body: "{}" });
+  assert.equal(purge.status, 200);
+  assert.equal((await api(`/api/tokens/${id}/preview`)).status, 404, "purged token is gone");
+  assert.equal((await api(`/api/tokens/${id}/assignments`)).status, 200, "empty list, not 404");
+  assert.equal((await api("/api/tokens")).body.some((t: any) => t.id === id), false);
+});

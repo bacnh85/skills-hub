@@ -383,6 +383,18 @@ function registerAdminRoutesInner(app: FastifyInstance) {
     return { ok: true };
   });
 
+  // hard-delete a revoked token and its assignments (irreversible)
+  app.delete("/api/tokens/:id/purge", async (req, reply) => {
+    const { id } = z.object({ id: z.coerce.number() }).parse((req as any).params);
+    const tok = db.prepare("SELECT revoked_at FROM tokens WHERE id = ?").get(id);
+    if (!tok) return reply.code(404).send({ error: "token not found" });
+    if (!tok.revoked_at) return reply.code(409).send({ error: "revoke the token before deleting it" });
+    db.prepare("DELETE FROM assignments WHERE token_id = ?").run(id);
+    db.prepare("DELETE FROM tokens WHERE id = ?").run(id);
+    audit("admin", actor(req).id, "token.purge", { id });
+    return { ok: true };
+  });
+
   // ---------- assignments ----------
   app.get("/api/tokens/:id/assignments", async (req) => {
     const { id } = z.object({ id: z.coerce.number() }).parse((req as any).params);
@@ -427,7 +439,7 @@ function registerAdminRoutesInner(app: FastifyInstance) {
   // what a client token will actually see
   app.get("/api/tokens/:id/preview", async (req, reply) => {
     const { id } = z.object({ id: z.coerce.number() }).parse((req as any).params);
-    const tok = db.prepare("SELECT id FROM tokens WHERE id = ? AND revoked_at IS NULL").get(id);
+    const tok = db.prepare("SELECT id FROM tokens WHERE id = ?").get(id);
     if (!tok) return reply.code(404).send({ error: "token not found" });
     const { resolveVisibleSkills } = await import("../skills/service.ts");
     return resolveVisibleSkills(id).map((r) => ({ name: r.name, semver: r.semver, description: r.description, category: r.category, pin: r.pin }));

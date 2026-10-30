@@ -635,6 +635,13 @@ async function viewTokenDetail(app, tokenId) {
       toast("Token revoked"); go("tokens");
     };
 
+    const purge = async () => {
+      const ok = await confirmDialog(`Delete '${tok.name}' permanently?`, "Removes the token and its assignments. This cannot be undone.", "Delete permanently");
+      if (!ok) return;
+      await api(`/api/tokens/${tokenId}/purge`, { method: "DELETE", body: "{}" });
+      toast("Token deleted"); go("tokens");
+    };
+
     const assignRows = assigns.map((a) =>
       el("tr", {},
         el("td", { class: "muted" }, a.kind),
@@ -649,6 +656,7 @@ async function viewTokenDetail(app, tokenId) {
 
     const assignPanel = el("div", { class: "panel" },
       el("h2", {}, "Assignments"),
+      tok.revoked_at ? null :
       el("div", { class: "form-row" },
         el("div", {}, el("label", {}, "Grant"), kind),
         el("div", {}, el("label", {}, "Target"), target),
@@ -690,6 +698,9 @@ async function viewTokenDetail(app, tokenId) {
           el("pre", { class: "code" }, `npx skills add ${location.origin}/s/<skill-name>.tgz`),
           el("button", { class: "btn small", onclick: (e) => { navigator.clipboard.writeText(`npx skills add ${location.origin}/s/<skill-name>.tgz`); toast("Copied"); } }, "Copy")),
         el("button", { class: "btn danger", style: "margin-top:16px", onclick: revoke }, "Revoke this token"),
+        tok.revoked_at
+          ? el("button", { class: "btn danger", style: "margin-top:16px", onclick: purge }, "Delete permanently")
+          : null,
       ),
     );
   } catch (e) { app.replaceChildren(errorPanel(e), el("button", { class: "btn", onclick: () => go("tokens") }, "Back")); }
