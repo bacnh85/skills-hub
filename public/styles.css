@@ -131,6 +131,7 @@ h3 {
   font-size: var(--fs-lg);
   font-weight: 600;
   letter-spacing: -0.015em;
+  white-space: nowrap;
 }
 .topbar .brand span {
   font-family: var(--font-mono);
@@ -152,7 +153,7 @@ h3 {
   color: var(--inverse-ink);
   font: inherit;
   font-size: var(--fs-sm);
-  padding: var(--sp-1) var(--sp-2);
+  padding: var(--sp-1);
   border-radius: var(--radius-sm);
   cursor: pointer;
 }

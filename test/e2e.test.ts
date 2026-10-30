@@ -447,3 +447,44 @@ test("10. revoked token: detail still loads, purge deletes it, purge of active i
   assert.equal((await api(`/api/tokens/${id}/assignments`)).status, 200, "empty list, not 404");
   assert.equal((await api("/api/tokens")).body.some((t: any) => t.id === id), false);
 });
+
+// settings: db overrides beat env; empty value = clear override (falls back to env)
+// Fastify rejects bodyless DELETEs with a JSON content-type, so bodyless calls send "{}"
+const settingsApi = async (path: string, opts: any = {}) => {
+  const needsBody = opts.body === undefined && opts.method && opts.method !== "GET";
+  return api(path, { ...opts, ...(needsBody ? { body: "{}" } : {}) });
+};
+
+test("11. settings: AI override without restart, live test, admin rotation gate", async () => {
+  // env sets AI_BASE_URL → GET shows env source; ADMIN_TOKEN env locks rotation
+  const s0 = await settingsApi("/api/settings");
+  assert.equal(s0.body.ai.source.base_url, "env");
+  assert.equal(s0.body.admin_token_source, "env");
+
+  // a settings override wins over env immediately (same process, no restart)
+  await settingsApi("/api/settings/ai", { method: "PUT", body: JSON.stringify({ base_url: "http://127.0.0.1:1/x", model: "override-model" }) });
+  const s1 = await settingsApi("/api/settings");
+  assert.equal(s1.body.ai.source.base_url, "settings");
+  assert.equal(s1.body.ai.model, "override-model");
+
+  // the live test reports the dead endpoint honestly instead of crashing
+  const dead = await settingsApi("/api/settings/ai/test", { method: "POST" });
+  assert.equal(dead.status, 200);
+  assert.equal(dead.body.ok, false);
+
+  // pointing back at the stub: it answers every path, so the test connects (0 models listed)
+  await settingsApi("/api/settings/ai", { method: "PUT", body: JSON.stringify({ base_url: `http://localhost:${AI_PORT}/v1` }) });
+  const stub = await settingsApi("/api/settings/ai/test", { method: "POST" });
+  assert.equal(stub.body.ok, true);
+  assert.deepEqual(stub.body.models, []);
+
+  // clearing the override falls back to env (base_url env again, model back to env's "stub")
+  await settingsApi("/api/settings/ai", { method: "PUT", body: JSON.stringify({ base_url: "", model: "" }) });
+  const s2 = await settingsApi("/api/settings");
+  assert.equal(s2.body.ai.source.base_url, "env");
+  assert.equal(s2.body.ai.model, "stub");
+
+  // rotation is refused while ADMIN_TOKEN env is set
+  const rot = await settingsApi("/api/settings/admin-token/rotate", { method: "POST" });
+  assert.equal(rot.status, 409);
+});

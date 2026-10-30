@@ -135,6 +135,12 @@ CREATE TABLE skill_tags (
   PRIMARY KEY (skill_id, tag_id)
 );
 `,
+  3: `
+CREATE TABLE settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+`,
 };
 
 function loadMigrations(d: DatabaseSync) {

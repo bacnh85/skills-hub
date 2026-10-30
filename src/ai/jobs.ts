@@ -1,6 +1,6 @@
 import matter from "gray-matter";
 import { db, audit } from "../db.ts";
-import { config } from "../config.ts";
+import { aiConfig } from "../config.ts";
 
 export interface ChatMessage {
   role: "system" | "user";
@@ -8,15 +8,16 @@ export interface ChatMessage {
 }
 
 export async function chatComplete(messages: ChatMessage[], json = true): Promise<string> {
-  if (!config.AI_BASE_URL) throw new Error("AI not configured: set AI_BASE_URL (OpenAI-compatible, e.g. http://localhost:11434/v1 for Ollama)");
-  const res = await fetch(`${config.AI_BASE_URL.replace(/\/$/, "")}/chat/completions`, {
+  const { base_url: baseUrl, api_key: apiKey, model: model } = aiConfig();
+  if (!baseUrl) throw new Error("AI not configured: set AI_BASE_URL or add it in Settings → AI desk");
+  const res = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      ...(config.AI_API_KEY ? { authorization: `Bearer ${config.AI_API_KEY}` } : {}),
+      ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
     },
     body: JSON.stringify({
-      model: config.AI_MODEL ?? "default",
+      model: model ?? "default",
       messages,
       ...(json ? { response_format: { type: "json_object" } } : {}),
     }),

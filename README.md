@@ -132,6 +132,10 @@ buttons — the model never mutates the registry directly.
 | `AI_MODEL` | — | model name for the configured endpoint |
 | `GITHUB_TOKEN` | — | raises GitHub API limits and enables private repos |
 
+The AI endpoint can also be set (and live-tested) in the UI under **Settings** —
+values saved there override the env vars without a restart. The admin token can
+be rotated from the same page unless it was fixed via `ADMIN_TOKEN`.
+
 ## Security notes
 
 - Everything requires a bearer token by default; the only public endpoint is
@@ -148,7 +152,7 @@ buttons — the model never mutates the registry directly.
 
 ```bash
 npm run dev     # tsx, no build step
-npm test        # 14 end-to-end tests against a live server
+npm test        # 15 end-to-end tests against a live server
 ```
 
 Design system: [`DESIGN.md`](DESIGN.md). Research notes and the reasoning

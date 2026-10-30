@@ -82,6 +82,7 @@ const PAGES = [
   ["sources", "Sources"],
   ["ai", "AI desk"],
   ["audit", "Audit"],
+  ["settings", "Settings"],
 ];
 
 function pill(status) {
@@ -104,7 +105,7 @@ function render() {
   }
   const app = $("#app");
   if (!store.token) return renderLogin(app);
-  const view = { dashboard: viewDashboard, skills: viewSkills, pending: viewPending, taxonomy: viewTaxonomy, tokens: viewTokens, sources: viewSources, ai: viewAi, audit: viewAudit }[state.page] || viewDashboard;
+  const view = { dashboard: viewDashboard, skills: viewSkills, pending: viewPending, taxonomy: viewTaxonomy, tokens: viewTokens, sources: viewSources, ai: viewAi, audit: viewAudit, settings: viewSettings }[state.page] || viewDashboard;
   view(app);
 }
 
@@ -807,11 +808,11 @@ async function viewAi(app) {
         aiReady
           ? el("p", { class: "muted", style: "margin-top:0" }, "Suggestions are proposals; apply them explicitly. Nothing changes until you do.")
           : el("div", { class: "error-banner", style: "margin-bottom:16px" },
-              "AI is not configured on this server. Set AI_BASE_URL to an OpenAI-compatible endpoint (Ollama works: http://localhost:11434/v1) and restart. Everything else in the hub works without it."),
+              "AI is not configured on this server. Add an OpenAI-compatible endpoint under Settings (Ollama works: http://localhost:11434/v1) — no restart needed. Everything else in the hub works without it."),
         el("div", { class: "checkline", style: "gap:8px" },
-          el("button", { class: "btn primary", disabled: !aiReady, title: aiReady ? null : "AI_BASE_URL is not set", onclick: () => run("categorize") }, "Sort into categories"),
-          el("button", { class: "btn", disabled: !aiReady, title: aiReady ? null : "AI_BASE_URL is not set", onclick: () => run("dedupe_review") }, "Review duplicates"),
-          el("button", { class: "btn", disabled: !aiReady, title: aiReady ? null : "AI_BASE_URL is not set", onclick: () => run("improve_descriptions") }, "Improve descriptions"))),
+          el("button", { class: "btn primary", disabled: !aiReady, title: aiReady ? null : "No AI endpoint configured — see Settings", onclick: () => run("categorize") }, "Sort into categories"),
+          el("button", { class: "btn", disabled: !aiReady, title: aiReady ? null : "No AI endpoint configured — see Settings", onclick: () => run("dedupe_review") }, "Review duplicates"),
+          el("button", { class: "btn", disabled: !aiReady, title: aiReady ? null : "No AI endpoint configured — see Settings", onclick: () => run("improve_descriptions") }, "Improve descriptions"))),
       el("div", { class: "panel" }, el("h2", {}, "Jobs"),
         jobs.length === 0 ? el("div", { class: "empty" }, el("strong", {}, "No jobs yet"), "Run one above; results appear here with an Apply action.") :
         el("table", { class: "ledger" },
@@ -886,6 +887,92 @@ async function viewAudit(app) {
           el("td", { class: "muted" }, `${a.actor_kind}${a.actor_id ? " #" + a.actor_id : ""}`),
           el("td", { class: "desc" }, a.detail_json),
           el("td", { class: "num right" }, a.ts))))),
+    );
+  } catch (e) { app.replaceChildren(errorPanel(e)); }
+}
+
+// settings page — admin token rotation + AI endpoint config (no restart needed)
+async function viewSettings(app) {
+  app.replaceChildren(el("div", { class: "empty" }, "Reading settings…"));
+  try {
+    const s = await api("/api/settings");
+    const locked = (src) => src === "env";
+
+    // ---- AI panel ----
+    const aiBaseUrl = el("input", { type: "text", value: s.ai.base_url, placeholder: "http://localhost:11434/v1", ...locked(s.ai.source.base_url) ? { disabled: true } : {} });
+    const aiApiKey = el("input", { type: "password", placeholder: s.ai.api_key_set ? "saved — leave blank to keep" : "not set", ...locked(s.ai.source.api_key) ? { disabled: true } : {} });
+    const aiModel = el("input", { type: "text", value: s.ai.model, placeholder: "llama3.1", ...locked(s.ai.source.model) ? { disabled: true } : {} });
+    const srcTag = (src) => el("span", { class: `pill ${src === "env" ? "draft" : src === "settings" ? "published" : "deprecated"}` }, src === "env" ? "from env" : src === "settings" ? "from settings" : "not set");
+    const aiResult = el("div");
+    const saveAi = async () => {
+      try {
+        await api("/api/settings/ai", { method: "PUT", body: JSON.stringify({
+          base_url: aiBaseUrl.value.trim(),
+          // blank key field = keep the saved one
+          ...(aiApiKey.value ? { api_key: aiApiKey.value } : {}),
+          model: aiModel.value.trim(),
+        }) });
+        toast("AI settings saved — live immediately");
+        render();
+      } catch (e) { toast(e.message, true); }
+    };
+    const testAi = async () => {
+      aiResult.replaceChildren(el("span", { class: "muted" }, "Testing…"));
+      try {
+        const r = await api("/api/settings/ai/test", { method: "POST", body: "{}" });
+        if (!r.ok) {
+          aiResult.replaceChildren(el("div", { class: "error-banner" }, `Failed${r.ms != null ? ` (${r.ms}ms)` : ""} — ${r.detail}`));
+          return;
+        }
+        const known = r.model_known === true ? " — configured model found" : r.model_known === false ? ` — configured model "${r.model_configured}" not in endpoint list` : "";
+        aiResult.replaceChildren(el("div", { class: "notice" },
+          `Connected in ${r.ms}ms · ${r.models.length} model${r.models.length === 1 ? "" : "s"} available${known}`,
+          r.models.length ? el("div", { class: "chip-row", style: "margin-top:8px" }, ...r.models.slice(0, 12).map((m) => el("span", { class: "chip mono" }, m))) : null));
+      } catch (e) { aiResult.replaceChildren(errorPanel(e)); }
+    };
+
+    // ---- admin token panel ----
+    const rotResult = el("div");
+    const rotate = async () => {
+      if (!(await confirmDialog("Rotate the admin token?",
+        "A new admin token is generated. Your current token (and every session signed in with it) stops working immediately.",
+        "Rotate now"))) return;
+      try {
+        const r = await api("/api/settings/admin-token/rotate", { method: "POST", body: "{}" });
+        store.token = r.token; // keep this browser signed in
+        rotResult.replaceChildren(el("div", { class: "notice" },
+          el("strong", {}, "New admin token — copy it now, it is shown once."),
+          el("pre", { class: "code", style: "margin-top:8px" }, r.token)));
+        render();
+      } catch (e) {
+        rotResult.replaceChildren(el("div", { class: "error-banner" }, e.message));
+      }
+    };
+
+    app.replaceChildren(
+      el("div", { class: "page-head" }, el("h1", {}, "Settings"), el("span", { class: "count" }, "changes apply immediately — no restart")),
+      el("div", { class: "panel" },
+        el("h2", {}, "AI endpoint"),
+        el("p", { class: "muted", style: "margin-top:0" },
+          "Powers the AI desk. Any OpenAI-compatible endpoint works — Ollama: ", el("code", { class: "mono" }, "http://localhost:11434/v1"), "."),
+        el("div", { class: "form-row" },
+          el("div", {}, el("label", {}, "Base URL ", srcTag(s.ai.source.base_url)), aiBaseUrl),
+          el("div", {}, el("label", {}, "API key ", srcTag(s.ai.source.api_key)), aiApiKey),
+          el("div", {}, el("label", {}, "Model ", srcTag(s.ai.source.model)), aiModel)),
+        el("div", { class: "checkline", style: "gap:8px;margin-top:12px" },
+          el("button", { class: "btn", onclick: testAi }, "Test connection"),
+          el("button", { class: "btn primary", onclick: saveAi }, "Save")),
+        aiResult),
+      el("div", { class: "panel" },
+        el("h2", {}, "Admin token"),
+        el("p", { class: "muted", style: "margin-top:0" },
+          "Signs into this admin UI and grants full control. Rotate it if it may have leaked. ",
+          locked(s.admin_token_source)
+            ? "It comes from the ADMIN_TOKEN environment variable, so rotation is disabled here. Remove the env var and restart — the current token keeps working — then rotate from this page."
+            : "Client tokens are unaffected."),
+        el("div", { class: "checkline", style: "gap:8px" },
+          el("button", { class: "btn", disabled: locked(s.admin_token_source), onclick: rotate }, "Rotate admin token")),
+        rotResult),
     );
   } catch (e) { app.replaceChildren(errorPanel(e)); }
 }

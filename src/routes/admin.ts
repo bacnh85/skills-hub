@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db, audit, genToken, sha256 } from "../db.ts";
 import { adminGuard, type Actor } from "../auth.ts";
 import { publishVersion, approveVersion, rejectVersion, getResolved, listVersionFiles, deleteSkillWithSnapshot, restoreSkill, type SkillSnapshot } from "../skills/service.ts";
-import { config } from "../config.ts";
+import { config, getSetting, setSetting, aiConfig } from "../config.ts";
 
 const body200 = "This is placeholder body content for a new skill. Replace with real instructions before publishing.\n".repeat(5);
 
@@ -457,7 +457,7 @@ function registerAdminRoutesInner(app: FastifyInstance) {
       tags: one("SELECT COUNT(*) n FROM tags"),
       tokens: one("SELECT COUNT(*) n FROM tokens WHERE revoked_at IS NULL"),
       sources: one("SELECT COUNT(*) n FROM sources WHERE enabled = 1"),
-      ai_configured: Boolean(config.AI_BASE_URL),
+      ai_configured: Boolean(aiConfig().base_url),
     };
   });
   app.get("/api/audit", async (req) => {
@@ -473,6 +473,76 @@ function registerAdminRoutesInner(app: FastifyInstance) {
          GROUP BY skill_name ORDER BY n DESC LIMIT ?`,
       )
       .all(Math.min(q.limit, 500));
+  });
+
+  // ---------- settings ----------
+  app.get("/api/settings", async () => {
+    const ai = aiConfig();
+    return {
+      ai: {
+        base_url: ai.base_url ?? "",
+        api_key_set: Boolean(ai.api_key),
+        model: ai.model ?? "",
+        // where each value comes from — the UI explains why a field is locked
+        source: {
+          base_url: getSetting("ai_base_url") ? "settings" : config.AI_BASE_URL ? "env" : "unset",
+          api_key: getSetting("ai_api_key") ? "settings" : config.AI_API_KEY ? "env" : "unset",
+          model: getSetting("ai_model") ? "settings" : config.AI_MODEL ? "env" : "unset",
+        },
+      },
+      admin_token_source: config.ADMIN_TOKEN ? "env" : "db",
+    };
+  });
+
+  app.put("/api/settings/ai", async (req) => {
+    const p = z
+      .object({
+        base_url: z.string().trim().optional(),
+        api_key: z.string().optional(),
+        model: z.string().trim().optional(),
+      })
+      .parse((req as any).body ?? {});
+    if (p.base_url !== undefined) setSetting("ai_base_url", p.base_url || null);
+    if (p.api_key !== undefined) setSetting("ai_api_key", p.api_key || null);
+    if (p.model !== undefined) setSetting("ai_model", p.model || null);
+    audit("admin", actor(req).id, "settings.ai.update", { model: p.model ?? null, base_url_set: Boolean(p.base_url) });
+    return { ok: true };
+  });
+
+  app.post("/api/settings/ai/test", async () => {
+    const ai = aiConfig();
+    if (!ai.base_url) return { ok: false, detail: "No AI endpoint configured" };
+    const started = Date.now();
+    try {
+      const res = await fetch(`${ai.base_url.replace(/\/$/, "")}/models`, {
+        headers: { ...(ai.api_key ? { authorization: `Bearer ${ai.api_key}` } : {}) },
+      });
+      if (!res.ok) return { ok: false, detail: `Endpoint responded ${res.status}`, ms: Date.now() - started };
+      const data = (await res.json().catch(() => null)) as any;
+      const models: string[] = Array.isArray(data?.data) ? data.data.map((m: any) => m?.id).filter(Boolean) : [];
+      return {
+        ok: true,
+        ms: Date.now() - started,
+        models,
+        model_configured: ai.model || null,
+        model_known: ai.model ? models.includes(ai.model) : null,
+      };
+    } catch (e: any) {
+      return { ok: false, detail: e?.message ?? "request failed", ms: Date.now() - started };
+    }
+  });
+
+  app.post("/api/settings/admin-token/rotate", async (req, reply) => {
+    if (config.ADMIN_TOKEN) {
+      return reply.code(409).send({
+        error:
+          "ADMIN_TOKEN is set in the environment, so the database copy cannot take over. Remove the env var and restart — your current token keeps working — then rotate here.",
+      });
+    }
+    const fresh = genToken("sk");
+    db.prepare("UPDATE admins SET token_hash = ? WHERE id = ?").run(sha256(fresh), actor(req).id);
+    audit("admin", actor(req).id, "admin.token.rotate", {});
+    return { token: fresh };
   });
 
   // ---------- export / import ----------
