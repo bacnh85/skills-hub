@@ -697,10 +697,9 @@ async function viewTokenDetail(app, tokenId) {
           el("label", {}, "npx skills (direct install)"),
           el("pre", { class: "code" }, `npx skills add ${location.origin}/s/<skill-name>.tgz`),
           el("button", { class: "btn small", onclick: (e) => { navigator.clipboard.writeText(`npx skills add ${location.origin}/s/<skill-name>.tgz`); toast("Copied"); } }, "Copy")),
-        el("button", { class: "btn danger", style: "margin-top:16px", onclick: revoke }, "Revoke this token"),
         tok.revoked_at
           ? el("button", { class: "btn danger", style: "margin-top:16px", onclick: purge }, "Delete permanently")
-          : null,
+          : el("button", { class: "btn danger", style: "margin-top:16px", onclick: revoke }, "Revoke this token"),
       ),
     );
   } catch (e) { app.replaceChildren(errorPanel(e), el("button", { class: "btn", onclick: () => go("tokens") }, "Back")); }
