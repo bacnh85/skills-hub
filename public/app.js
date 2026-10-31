@@ -534,7 +534,7 @@ async function viewTaxonomy(app) {
         el("p", { class: "muted", style: "margin:4px 0 16px" }, "The filing system — every skill sits in exactly one category. Assigning a category to a token grants all of its skills."),
         el("div", { class: "form-row" }, el("div", {}, el("label", {}, "New category"), catName), el("button", { class: "btn primary", onclick: addCat }, "Add")),
         cats.length === 0 ? el("div", { class: "empty" }, el("strong", {}, "No categories yet"), "Add one above, or let the AI desk sort skills for you.") :
-        el("table", { class: "ledger" },
+        el("table", { class: "ledger fixed" },
           el("thead", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "Category"), el("th", { class: "col-desc" }, "Skills"), el("th", { class: "right" }, "Count"))),
           el("tbody", {}, ...cats.map(catRow)))),
       el("div", { class: "split" },
@@ -542,14 +542,14 @@ async function viewTaxonomy(app) {
           el("p", { class: "muted", style: "margin:4px 0 16px" }, "Named bundles across categories — assign a whole pack to a token as one unit, or serve it as a single .tgz archive."),
           el("div", { class: "form-row" }, el("div", {}, el("label", {}, "New collection"), colName), el("button", { class: "btn primary", onclick: addCol }, "Add")),
           cols.length === 0 ? el("div", { class: "empty" }, el("strong", {}, "No collections yet"), "A collection is a named bundle of skills you assign as one unit.") :
-          el("table", { class: "ledger" },
+          el("table", { class: "ledger fixed" },
             el("thead", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "Collection"), el("th", { class: "col-desc" }, "Skills"), el("th", { class: "right" }, "Count"))),
             el("tbody", {}, ...cols.map(colRow)))),
         el("div", { class: "panel" }, el("h2", {}, "Tags"),
           el("p", { class: "muted", style: "margin:4px 0 16px" }, "Cross-cutting labels — a skill can carry many, and agents can search by them over MCP."),
           el("div", { class: "form-row" }, el("div", {}, el("label", {}, "New tag"), tagName), el("button", { class: "btn primary", onclick: addTag }, "Add")),
           tags.length === 0 ? el("div", { class: "empty" }, el("strong", {}, "No tags yet"), "Tags like pdf or onboarding cut across categories.") :
-          el("table", { class: "ledger" },
+          el("table", { class: "ledger fixed" },
             el("thead", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "Tag"), el("th", { class: "col-desc" }, "Skills"), el("th", { class: "right" }, "Count"))),
             el("tbody", {}, ...tags.map(tagRow))))),
     );

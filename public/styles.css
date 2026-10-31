@@ -496,6 +496,33 @@ tr.row:focus-within .row-del {
   color: var(--forest-deep);
 }
 
+/* taxonomy: three tables, one shared column grid (fixed layout keeps them identical) */
+.ledger.fixed {
+  table-layout: fixed;
+}
+.ledger.fixed th:nth-child(1),
+.ledger.fixed td:first-child {
+  width: 44px;
+}
+.ledger.fixed th:nth-child(2) {
+  width: 30%;
+}
+.ledger.fixed th:last-child {
+  width: 96px;
+}
+.ledger.fixed td.name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ledger.fixed .chips {
+  min-width: 0;
+}
+.ledger.fixed .chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ---------- skills: side menu (categories + tags) ---------- */
 .split-menu {
   display: grid;
@@ -778,6 +805,9 @@ pre.code {
   grid-template-columns: 1fr 1fr;
   gap: var(--sp-3);
 }
+.split > .panel {
+  min-width: 0; /* 1fr must stay equal even when a table's nowrap content begs for more */
+}
 .kv {
   display: grid;
   grid-template-columns: 132px 1fr;
@@ -866,6 +896,15 @@ pre.code {
   gap: var(--sp-1);
 }
 
+/* tablet band: wide ledgers scroll on their own axis instead of the page */
+@media (max-width: 1080px) {
+  .ledger {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
 /* the one page-load reveal */
 @media (prefers-reduced-motion: no-preference) {
   main {
@@ -887,8 +926,26 @@ pre.code {
   main {
     padding: var(--sp-2);
   }
+  .topbar {
+    flex-wrap: wrap;
+  }
+  .topbar .brand span {
+    display: none; /* nowrap brand + full nav don't share 390px */
+  }
   .split {
     grid-template-columns: 1fr;
+  }
+  /* fixed-layout tables must shrink with the viewport, not force scroll */
+  .ledger.fixed {
+    table-layout: auto;
+    display: block;
+    overflow-x: auto;
+  }
+  .ledger.fixed thead {
+    display: table-header-group;
+  }
+  .ledger.fixed th:nth-child(2) {
+    width: auto;
   }
   .ledger .col-desc,
   .ledger .desc {
