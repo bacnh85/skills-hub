@@ -321,7 +321,7 @@ label {
   padding: var(--sp-2);
   border-bottom: 1px solid var(--rule);
   font-size: var(--fs-sm);
-  vertical-align: middle;
+  vertical-align: top;
   white-space: nowrap;
 }
 .ledger tbody tr:last-child td {
@@ -358,7 +358,7 @@ label {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ledger td.right {
+.ledger .right {
   text-align: right;
 }
 
