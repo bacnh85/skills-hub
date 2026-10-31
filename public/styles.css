@@ -807,6 +807,7 @@ pre.code {
 }
 .split > .panel {
   min-width: 0; /* 1fr must stay equal even when a table's nowrap content begs for more */
+  margin-top: 0; /* the grid gap is the spacing; .panel + .panel is for stacked panels */
 }
 .kv {
   display: grid;
