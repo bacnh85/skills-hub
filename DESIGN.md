@@ -50,6 +50,10 @@ components:
     background: "{colors.surface}"
     border: "1px solid {colors.rule}"
     radius: "{rounded.md}"
+  chat:
+    messages: "ledger rows — mono `you`/`assistant` labels, hairline separation, user turn on {colors.surface}"
+    proposals: "hairline rows with one Apply button each; applied state = published pill"
+    session_switcher: "native select + small buttons, no custom dropdown"
 ---
 
 # Skills Hub — Design System

@@ -18,7 +18,8 @@ database.
 ## What it does
 
 - **Admin web UI** — skills, categories, collections, tags, tokens, sources,
-  AI-assisted organisation, and a full audit log. Light and dark themes.
+  AI-assisted organisation, an AI assistant chat with saved sessions, and a full
+  audit log. Light and dark themes.
 - **MCP server** at `/mcp` — five tools with three-tier progressive disclosure,
   so agents fetch only what they need.
 - **Per-token visibility** — issue one token per project or machine; each token
@@ -119,6 +120,13 @@ works): sort uncategorised skills into categories, review duplicate pairs,
 rewrite weak descriptions. Results are proposals in the UI with explicit Apply
 buttons — the model never mutates the registry directly.
 
+**AI assistant chat** lives on the same page: ask about the catalog in natural
+language, and change requests come back as proposals you apply with one click
+(same trust boundary). Conversations are saved server-side as sessions — start
+a new one or continue any previous from the session picker. Thinking level
+(low / medium / high, sent as `reasoning_effort`) is configured under Settings
+and applies to both chat and batch jobs.
+
 ## Configuration
 
 | Env | Default | Meaning |
@@ -130,6 +138,7 @@ buttons — the model never mutates the registry directly.
 | `AI_BASE_URL` | — | OpenAI-compatible endpoint (e.g. `http://localhost:11434/v1` for Ollama) |
 | `AI_API_KEY` | — | optional |
 | `AI_MODEL` | — | model name for the configured endpoint |
+| `AI_THINKING_LEVEL` | `medium` | `low` \| `medium` \| `high` — sent to the endpoint as `reasoning_effort` unless medium |
 | `GITHUB_TOKEN` | — | raises GitHub API limits and enables private repos |
 
 The AI endpoint can also be set (and live-tested) in the UI under **Settings** —

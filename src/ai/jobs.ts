@@ -3,12 +3,16 @@ import { db, audit } from "../db.ts";
 import { aiConfig } from "../config.ts";
 
 export interface ChatMessage {
-  role: "system" | "user";
+  role: "system" | "user" | "assistant";
   content: string;
 }
 
-export async function chatComplete(messages: ChatMessage[], json = true): Promise<string> {
-  const { base_url: baseUrl, api_key: apiKey, model: model } = aiConfig();
+export async function chatCompleteFull(
+  messages: ChatMessage[],
+  opts: { json?: boolean } = {},
+): Promise<{ content: string; reasoning?: string }> {
+  const cfg = aiConfig();
+  const { base_url: baseUrl, api_key: apiKey, model: model } = cfg;
   if (!baseUrl) throw new Error("AI not configured: set AI_BASE_URL or add it in Settings → AI desk");
   const res = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
@@ -19,12 +23,20 @@ export async function chatComplete(messages: ChatMessage[], json = true): Promis
     body: JSON.stringify({
       model: model ?? "default",
       messages,
-      ...(json ? { response_format: { type: "json_object" } } : {}),
+      ...(opts.json ? { response_format: { type: "json_object" } } : {}),
+      // medium = the common default; omitting the field keeps strict endpoints happy
+      ...(cfg.thinking_level && cfg.thinking_level !== "medium" ? { reasoning_effort: cfg.thinking_level } : {}),
     }),
+    signal: AbortSignal.timeout(120_000),
   });
   if (!res.ok) throw new Error(`AI request failed: ${res.status} ${await res.text().catch(() => "")}`);
   const data = (await res.json()) as any;
-  return data.choices?.[0]?.message?.content ?? "";
+  const msg = data.choices?.[0]?.message;
+  return { content: msg?.content ?? "", reasoning: msg?.reasoning ?? msg?.reasoning_content };
+}
+
+export async function chatComplete(messages: ChatMessage[], json = true): Promise<string> {
+  return (await chatCompleteFull(messages, { json })).content;
 }
 
 // ---------- job kinds ----------

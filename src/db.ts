@@ -141,6 +141,18 @@ CREATE TABLE settings (
   value TEXT NOT NULL
 );
 `,
+  4: `
+CREATE TABLE chat_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('user','assistant')),
+  content TEXT NOT NULL,
+  reasoning TEXT,
+  proposals_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_chat_session ON chat_messages(session_id, id);
+`,
 };
 
 function loadMigrations(d: DatabaseSync) {

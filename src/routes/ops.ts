@@ -4,6 +4,7 @@ import { db, audit } from "../db.ts";
 import { importFromUrl } from "../ingest/import.ts";
 import { parseSource } from "../ingest/fetchers.ts";
 import { adminGuard } from "../auth.ts";
+import { runChat, parseProposals } from "../ai/chat.ts";
 
 export function registerOpsRoutes(app: FastifyInstance) {
   app.register(async (scope) => {
@@ -109,6 +110,120 @@ function registerOpsInner(app: FastifyInstance) {
     const job = db.prepare("SELECT * FROM ai_jobs WHERE id = ?").get(id) as any;
     if (!job) return reply.code(404).send({ error: "not found" });
     return { ...job, params: JSON.parse(job.params_json ?? "{}"), result: job.result_json ? JSON.parse(job.result_json) : null };
+  });
+
+  // ---------- AI chat (sessions persist in chat_messages; single admin) ----------
+  const CONTEXT_TURNS = 20;
+  const sessionIdSchema = z.string().min(8).max(64);
+  const wireMessages = (sessionId: string) =>
+    (db
+      .prepare("SELECT role, content FROM chat_messages WHERE session_id = ? ORDER BY id DESC LIMIT ?")
+      .all(sessionId, CONTEXT_TURNS) as any[])
+      .reverse()
+      .map((r) => ({ role: r.role as "user" | "assistant", content: r.content }));
+
+  app.post("/api/ai/chat", async (req, reply) => {
+    const parsed = z
+      .object({
+        session_id: z.string().min(8).max(64).optional(),
+        message: z.string().min(1).max(32000),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "invalid body" });
+    const p = parsed.data;
+    const sessionId = p.session_id;
+    // the turn is stored only after a successful completion — a failed AI call
+    // never leaves a half-written exchange, and a retry can't duplicate the user row
+    const context = sessionId
+      ? [...wireMessages(sessionId), { role: "user" as const, content: p.message }]
+      : [{ role: "user" as const, content: p.message }];
+    try {
+      const { reply: text, reasoning } = await runChat(context);
+      const proposals = parseProposals(text);
+      let messageId: number | null = null;
+      if (sessionId) {
+        db.prepare("INSERT INTO chat_messages (session_id, role, content) VALUES (?,?,?)").run(sessionId, "user", p.message);
+        const r = db
+          .prepare("INSERT INTO chat_messages (session_id, role, content, reasoning, proposals_json) VALUES (?,?,?,?,?)")
+          .run(sessionId, "assistant", text, reasoning ?? null, proposals.length ? JSON.stringify(proposals.map((pr) => ({ ...pr, applied: false }))) : null);
+        messageId = Number(r.lastInsertRowid);
+      }
+      audit("admin", (req as any).actor?.id ?? null, "ai.chat", { session_id: sessionId ?? null, turns: 1 });
+      return { reply: text, ...(reasoning ? { reasoning } : {}), proposals, message_id: messageId };
+    } catch (e: any) {
+      return reply.code(502).send({ error: String(e.message) });
+    }
+  });
+
+  app.get("/api/ai/chat/sessions", async () =>
+    db
+      .prepare(
+        `SELECT session_id,
+                substr(MIN(CASE WHEN role='user' THEN content END), 1, 60) AS title,
+                COUNT(*) AS messages, MAX(created_at) AS last_at
+         FROM chat_messages GROUP BY session_id ORDER BY MAX(id) DESC LIMIT 30`,
+      )
+      .all(),
+  );
+
+  app.get("/api/ai/chat/sessions/:id", async (req, reply) => {
+    const parsed = sessionIdSchema.safeParse((req as any).params.id);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "invalid id" });
+    const id = parsed.data;
+    const rows = db
+      .prepare("SELECT id, role, content, reasoning, proposals_json FROM chat_messages WHERE session_id = ? ORDER BY id ASC LIMIT 200")
+      .all(id) as any[];
+    if (!rows.length) return reply.code(404).send({ error: "session not found" });
+    return {
+      session_id: id,
+      messages: rows.map((r) => ({
+        id: r.id,
+        role: r.role,
+        content: r.content,
+        reasoning: r.reasoning,
+        proposals: r.proposals_json ? JSON.parse(r.proposals_json) : [],
+      })),
+    };
+  });
+
+  app.delete("/api/ai/chat/sessions/:id", async (req, reply) => {
+    const parsed = sessionIdSchema.safeParse((req as any).params.id);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "invalid id" });
+    const id = parsed.data;
+    db.prepare("DELETE FROM chat_messages WHERE session_id = ?").run(id);
+    audit("admin", (req as any).actor?.id ?? null, "ai.chat.session.delete", { session_id: id });
+    return { ok: true };
+  });
+
+  // the UI marks proposals applied after each successful Apply (survives reloads;
+  // re-applying any proposal is idempotent, so a lost marking can't corrupt anything)
+  app.put("/api/ai/chat/messages/:id/proposals", async (req, reply) => {
+    const parsedId = z.coerce.number().safeParse((req as any).params.id);
+    if (!parsedId.success) return reply.code(400).send({ error: "invalid message id" });
+    const id = parsedId.data;
+    const parsed = z
+      .object({
+        proposals: z.array(
+          z.object({
+            action: z.enum(["set_category", "set_status", "set_tags", "set_description"]),
+            skill: z.string().min(1),
+            category: z.string().optional(),
+            create: z.boolean().optional(),
+            status: z.string().optional(),
+            tags: z.array(z.string()).optional(),
+            description: z.string().max(1024).optional(),
+            applied: z.boolean().optional(),
+          }),
+        ).max(50),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "invalid body" });
+    const p = parsed.data;
+    const row = db.prepare("SELECT id FROM chat_messages WHERE id = ?").get(id);
+    if (!row) return reply.code(404).send({ error: "message not found" });
+    db.prepare("UPDATE chat_messages SET proposals_json = ? WHERE id = ?").run(JSON.stringify(p.proposals), id);
+    audit("admin", (req as any).actor?.id ?? null, "ai.chat.proposals.update", { message_id: id });
+    return { ok: true };
   });
 
   // apply an AI suggestion through normal REST semantics (AI never mutates directly)

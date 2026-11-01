@@ -335,6 +335,91 @@ test("6. ingest: preview stores nothing, import gates flagged skills", async () 
   assert.ok(again.body.items.every((i: any) => i.action === "skipped"), "unchanged content must not bump versions");
 });
 
+// chat: sessions round-trip, proposals parse, reasoning_effort flows to the wire
+// (run BEFORE test 7 so the catalog has few skills and session ids are predictable)
+const CHAT_SESSION_A = "sess-e2e-chat-a1";
+const CHAT_SESSION_B = "sess-e2e-chat-b2";
+let chatAssistantId: number | null = null;
+test("6b. AI chat: sessions persist, proposals parse, thinking level reaches the wire", async () => {
+  // default thinking level
+  const s0 = await settingsApi("/api/settings");
+  assert.equal(s0.body.ai.thinking_level, "medium");
+
+  // anonymous is refused
+  const anon = await fetch(`${BASE}/api/ai/chat`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ message: "hi" }),
+  });
+  assert.equal(anon.status, 401);
+
+  // empty session list
+  const emptyList = await api("/api/ai/chat/sessions");
+  assert.deepEqual(emptyList.body, []);
+
+  // stateless call (no session_id) works and parses proposals
+  const stateless = await api("/api/ai/chat", { method: "POST", body: JSON.stringify({ message: "What needs attention?" }) });
+  assert.equal(stateless.status, 200);
+  assert.match(stateless.body.reply, /set_category/);
+  assert.equal(stateless.body.reasoning, undefined, "medium must not send reasoning_effort");
+  assert.equal(stateless.body.proposals[0].action, "set_category");
+  assert.equal(stateless.body.message_id, null);
+
+  // session A: two turns -> 4 rows
+  const a1 = await api("/api/ai/chat", { method: "POST", body: JSON.stringify({ session_id: CHAT_SESSION_A, message: "first question" }) });
+  assert.equal(a1.status, 200);
+  chatAssistantId = a1.body.message_id;
+  assert.equal(typeof chatAssistantId, "number");
+  await api("/api/ai/chat", { method: "POST", body: JSON.stringify({ session_id: CHAT_SESSION_A, message: "second question" }) });
+
+  // session list shows session A with title from the first user message
+  const list = await api("/api/ai/chat/sessions");
+  assert.equal(list.body.length, 1);
+  assert.equal(list.body[0].session_id, CHAT_SESSION_A);
+  assert.equal(list.body[0].title, "first question");
+  assert.equal(list.body[0].messages, 4);
+
+  // session detail: ordered rows, proposals parsed on assistant rows
+  const detail = await api(`/api/ai/chat/sessions/${CHAT_SESSION_A}`);
+  assert.equal(detail.body.messages.length, 4);
+  assert.deepEqual(detail.body.messages.map((m: any) => m.role), ["user", "assistant", "user", "assistant"]);
+  assert.equal(detail.body.messages[1].proposals.length, 1);
+  assert.equal(detail.body.messages[1].proposals[0].applied, false);
+
+  // mark a proposal applied -> survives reload
+  await api(`/api/ai/chat/messages/${chatAssistantId}/proposals`, {
+    method: "PUT",
+    body: JSON.stringify({ proposals: [{ action: "set_category", skill: "good-skill", category: "dev", applied: true }] }),
+  });
+  const detail2 = await api(`/api/ai/chat/sessions/${CHAT_SESSION_A}`);
+  assert.equal(detail2.body.messages[1].proposals[0].applied, true);
+
+  // second session; list orders most recent first
+  await api("/api/ai/chat", { method: "POST", body: JSON.stringify({ session_id: CHAT_SESSION_B, message: "other thread" }) });
+  const list2 = await api("/api/ai/chat/sessions");
+  assert.deepEqual(list2.body.map((s: any) => s.session_id), [CHAT_SESSION_B, CHAT_SESSION_A]);
+
+  // delete session B
+  const del = await api(`/api/ai/chat/sessions/${CHAT_SESSION_B}`, { method: "DELETE", body: "{}" });
+  assert.equal(del.body.ok, true);
+  const list3 = await api("/api/ai/chat/sessions");
+  assert.equal(list3.body.length, 1);
+
+  // thinking level: high -> reasoning_effort reaches the wire, stub echoes it back
+  await settingsApi("/api/settings/ai", { method: "PUT", body: JSON.stringify({ thinking_level: "high" }) });
+  const withReasoning = await api("/api/ai/chat", { method: "POST", body: JSON.stringify({ session_id: CHAT_SESSION_A, message: "think harder" }) });
+  assert.match(withReasoning.body.reasoning, /high/);
+  const sHigh = await settingsApi("/api/settings");
+  assert.equal(sHigh.body.ai.source.thinking_level, "settings");
+
+  // reset + malformed body
+  await settingsApi("/api/settings/ai", { method: "PUT", body: JSON.stringify({ thinking_level: "medium" }) });
+  const bad = await api("/api/ai/chat", { method: "POST", body: JSON.stringify({ message: "" }) });
+  assert.equal(bad.status, 400);
+});
+
+// ---------------------------------------------------------------------------
+
 test("7. AI jobs run and suggestions apply through normal REST", async () => {
   const enq = await api("/api/ai/jobs", { method: "POST", body: JSON.stringify({ kind: "categorize" }) });
   assert.equal(enq.status, 201);

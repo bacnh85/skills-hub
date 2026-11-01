@@ -8,6 +8,7 @@ const Env = z.object({
   AI_BASE_URL: z.string().optional(),
   AI_API_KEY: z.string().optional(),
   AI_MODEL: z.string().optional(),
+  AI_THINKING_LEVEL: z.enum(["low", "medium", "high"]).default("medium"),
   GITHUB_TOKEN: z.string().optional(),
   PUBLIC_SKILL_ACCESS: z
     .string()
@@ -47,5 +48,6 @@ export function aiConfig() {
     base_url: getSetting("ai_base_url") ?? config.AI_BASE_URL,
     api_key: getSetting("ai_api_key") ?? config.AI_API_KEY,
     model: getSetting("ai_model") ?? config.AI_MODEL,
+    thinking_level: getSetting("ai_thinking_level") ?? config.AI_THINKING_LEVEL,
   };
 }

@@ -897,6 +897,128 @@ pre.code {
   gap: var(--sp-1);
 }
 
+/* ---------- assistant chat ---------- */
+.chat-sessions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-bottom: var(--sp-3);
+  margin-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--rule);
+}
+.chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  max-height: 26rem;
+  overflow-y: auto;
+  padding-right: var(--sp-1);
+}
+.msg .msg-label {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+  margin-bottom: var(--sp-1);
+}
+.msg.user {
+  background: var(--surface);
+  border-left: 2px solid var(--rule);
+  padding: var(--sp-2) var(--sp-3);
+}
+.msg.ai {
+  padding: 0 var(--sp-3);
+}
+.msg.user .msg-body {
+  white-space: pre-wrap;
+}
+.md {
+  max-width: 72ch;
+  overflow-wrap: break-word;
+}
+.md p {
+  margin: 0 0 var(--sp-2);
+}
+.md ul {
+  margin: 0 0 var(--sp-2);
+  padding-left: 1.25rem;
+}
+.md h4 {
+  font-size: var(--fs-base);
+  margin: var(--sp-2) 0 var(--sp-1);
+}
+.md pre.code {
+  overflow-x: auto;
+}
+.thoughts-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--ink-soft);
+  cursor: pointer;
+  margin: var(--sp-1) 0;
+}
+.thoughts-toggle:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+.thoughts-block {
+  font-size: var(--fs-sm);
+  color: var(--ink-soft);
+  border-left: 2px solid var(--rule);
+  padding-left: var(--sp-3);
+  margin: var(--sp-1) 0 var(--sp-2);
+  white-space: pre-wrap;
+}
+.proposals {
+  margin-top: var(--sp-2);
+}
+.proposal-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0;
+  border-top: 1px solid var(--rule);
+}
+.proposal-row.head {
+  border-top: none;
+}
+.msg.ai.pending .msg-body.thinking::after {
+  content: "…";
+}
+@media (prefers-reduced-motion: no-preference) {
+  .msg.ai.pending .msg-body.thinking {
+    animation: think 1.2s ease-in-out infinite;
+  }
+  @keyframes think {
+    0%, 100% {
+      opacity: 0.55;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+}
+.chat-composer {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-end;
+  border-top: 1px solid var(--rule);
+  padding-top: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+.chat-input {
+  flex: 1;
+  resize: vertical;
+  min-height: 3rem;
+}
+.chat-empty .chips {
+  margin-top: var(--sp-3);
+}
+
 /* tablet band: wide ledgers scroll on their own axis instead of the page */
 @media (max-width: 1080px) {
   .ledger {

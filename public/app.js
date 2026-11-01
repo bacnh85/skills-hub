@@ -781,12 +781,247 @@ function renderSecurityNote() {
     "Every import is scanned before it lands: malformed frontmatter is rejected, and prompt-injection or credential patterns force the skill to draft with the flags shown on its record.");
 }
 
-// ---------- AI desk ----------
+// ---------- AI desk: assistant chat (server-side sessions) + advisory jobs ----------
+
+// minimal markdown for assistant replies — escape-first, line-based; nothing else
+function mdLite(src) {
+  const out = [];
+  const inline = (s) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  let list = false, pre = false;
+  for (const raw of String(src ?? "").split("\n")) {
+    if (/^\s*```/.test(raw)) {
+      if (pre) { out.push("</pre>"); pre = false; }
+      else { if (list) { out.push("</ul>"); list = false; } out.push('<pre class="code">'); pre = true; }
+      continue;
+    }
+    if (pre) { out.push(esc(raw) + "\n"); continue; }
+    const li = raw.match(/^\s*[-*]\s+(.*)/);
+    if (li) { if (!list) { out.push("<ul>"); list = true; } out.push(`<li>${inline(li[1])}</li>`); continue; }
+    if (list) { out.push("</ul>"); list = false; }
+    if (!raw.trim()) continue;
+    const h = raw.match(/^#{2,4}\s+(.*)/);
+    if (h) { out.push(`<h4>${inline(h[1])}</h4>`); continue; }
+    out.push(`<p>${inline(raw.trim())}</p>`);
+  }
+  if (list) out.push("</ul>");
+  if (pre) out.push("</pre>");
+  return out.join("");
+}
+
+function proposalSummary(p) {
+  if (p.action === "set_category") return `File ${p.skill} under ${p.category}${p.create ? " (new category)" : ""}`;
+  if (p.action === "set_status") return `Set ${p.skill} → ${p.status}`;
+  if (p.action === "set_tags") return `Tag ${p.skill}: ${(p.tags || []).join(", ")}`;
+  return `Rewrite description of ${p.skill}`;
+}
+
 async function viewAi(app) {
   app.replaceChildren(el("div", { class: "empty" }, "Reading jobs…"));
   try {
-    const [jobs, stats] = await Promise.all([api("/api/ai/jobs"), api("/api/stats")]);
+    const stats = await api("/api/stats");
     const aiReady = stats.ai_configured === true;
+    app.replaceChildren(
+      el("div", { class: "page-head" }, el("h1", {}, "AI desk"), el("span", { class: "count" }, "advisory only — nothing changes until you apply it")),
+    );
+    const chatPanel = el("div", { class: "panel" });
+    app.append(chatPanel);
+    buildChatPanel(chatPanel, aiReady);
+    await viewAiJobs(app, aiReady);
+  } catch (e) { app.replaceChildren(errorPanel(e)); }
+}
+
+// ---- assistant chat: sessions live server-side; proposals apply through existing REST ----
+function buildChatPanel(panel, aiReady) {
+  const sessionIdKey = "sp_chat_session";
+  let sessionId = localStorage.getItem(sessionIdKey) || null;
+  let awaiting = false;
+  const freshId = () => crypto.randomUUID ? crypto.randomUUID() : `sess-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+  const sessionSel = el("select", { "aria-label": "Saved chat sessions", style: "max-width:340px" });
+  const newBtn = el("button", { class: "btn small", onclick: () => { sessionId = null; localStorage.removeItem(sessionIdKey); draw(); refreshSessions(); } }, "New chat");
+  const delBtn = el("button", { class: "btn small danger", style: "display:none", onclick: deleteSession }, "Delete");
+  const log = el("div", { class: "chat-log", "aria-live": "polite" });
+  const input = el("textarea", { class: "chat-input", rows: "2", placeholder: aiReady ? "Ask about the catalog or request changes — Enter sends, Shift+Enter breaks the line" : "AI is not configured — add an endpoint under Settings" });
+  const send = el("button", { class: "btn primary", onclick: submit }, "Send");
+  const errorBox = el("div");
+
+  const setBusy = (b) => { awaiting = b; send.disabled = b || !aiReady; input.disabled = b || !aiReady; };
+
+  async function refreshSessions() {
+    try {
+      const list = await api("/api/ai/chat/sessions");
+      if (sessionId && !list.some((s) => s.session_id === sessionId)) { sessionId = null; localStorage.removeItem(sessionIdKey); }
+      sessionSel.replaceChildren(
+        el("option", { value: "" }, list.length ? `${list.length} saved session${list.length === 1 ? "" : "s"}` : "No saved sessions"),
+        ...list.map((s) => el("option", { value: s.session_id, selected: s.session_id === sessionId }, `${s.title} (${s.messages})`)),
+      );
+      sessionSel.disabled = list.length === 0;
+      delBtn.style.display = sessionId ? "" : "none";
+    } catch { sessionSel.disabled = true; }
+  }
+  sessionSel.addEventListener("change", () => {
+    if (!sessionSel.value) return;
+    sessionId = sessionSel.value;
+    localStorage.setItem(sessionIdKey, sessionId);
+    draw();
+    refreshSessions();
+  });
+  async function deleteSession() {
+    if (!sessionId) return;
+    if (!(await confirmDialog("Delete this chat session?", "The whole conversation is removed. This cannot be undone.", "Delete session"))) return;
+    try {
+      await api(`/api/ai/chat/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE", body: "{}" });
+      sessionId = null;
+      localStorage.removeItem(sessionIdKey);
+      toast("Session deleted");
+      draw();
+      refreshSessions();
+    } catch (e) { toast(e.message, true); }
+  }
+
+  function renderProposals(msg, proposals) {
+    const persist = async () => {
+      if (!msg.id) return;
+      try { await api(`/api/ai/chat/messages/${msg.id}/proposals`, { method: "PUT", body: JSON.stringify({ proposals }) }); }
+      catch { /* worst case the applied pill reverts on reload; re-apply is idempotent */ }
+    };
+    const applyOne = async (p, row) => {
+      try {
+        if (p.action === "set_category") {
+          await api("/api/ai/apply/categorize", { method: "POST", body: JSON.stringify({ skill: p.skill, category: p.category, create: !!p.create }) });
+        } else if (p.action === "set_status") {
+          await api(`/api/skills/${encodeURIComponent(p.skill)}`, { method: "PATCH", body: JSON.stringify({ status: p.status }) });
+        } else if (p.action === "set_tags") {
+          await api(`/api/skills/${encodeURIComponent(p.skill)}`, { method: "PATCH", body: JSON.stringify({ tags: p.tags }) });
+        } else if (p.action === "set_description") {
+          const s = await api(`/api/skills/${encodeURIComponent(p.skill)}`);
+          if (!s.current_version_id) { toast(`${p.skill} has no version to describe yet`, true); return; }
+          await api("/api/ai/apply/description", { method: "POST", body: JSON.stringify({ version_id: s.current_version_id, description: p.description }) });
+        }
+        p.applied = true;
+        const btn = row.querySelector("button");
+        if (btn) row.replaceChild(el("span", { class: "pill published" }, "applied"), btn);
+        toast(proposalSummary(p) + " — applied");
+        persist();
+        return true;
+      } catch (e) { toast(e.message, true); return false; }
+    };
+    const rows = proposals.map((p) => {
+      const row = el("div", { class: "proposal-row" },
+        el("span", { class: "proposal-text" }, proposalSummary(p)),
+        p.applied ? el("span", { class: "pill published" }, "applied") : el("button", { class: "btn small primary", onclick: () => applyOne(p, row) }, "Apply"));
+      return row;
+    });
+    const unapplied = proposals.filter((p) => !p.applied);
+    const wrap = el("div", { class: "proposals" });
+    if (unapplied.length > 1) {
+      const applyAllBtn = el("button", { class: "btn small", onclick: async () => {
+        applyAllBtn.disabled = true;
+        for (const p of unapplied) {
+          const row = rows[proposals.indexOf(p)];
+          if (!(await applyOne(p, row))) break; // stop at the first failure; remaining rows stay applicable
+        }
+        applyAllBtn.disabled = false;
+      } }, "Apply all");
+      wrap.append(el("div", { class: "proposal-row head" }, el("span", { class: "muted" }, `${unapplied.length} proposals`), applyAllBtn));
+    }
+    wrap.append(...rows);
+    return wrap;
+  }
+
+  function drawMsg(m) {
+    if (m.role === "user") return el("div", { class: "msg user" }, el("div", { class: "msg-label" }, "you"), el("div", { class: "msg-body" }, m.content));
+    const kids = [el("div", { class: "msg-label" }, "assistant")];
+    if (m.reasoning) {
+      const block = el("div", { class: "thoughts-block", hidden: true }, m.reasoning);
+      const tog = el("button", { class: "thoughts-toggle", "aria-expanded": "false", onclick: () => {
+        const open = tog.getAttribute("aria-expanded") === "true";
+        tog.setAttribute("aria-expanded", String(!open));
+        block.hidden = open;
+        tog.textContent = open ? "Thoughts ▸" : "Thoughts ▾";
+      } }, "Thoughts ▸");
+      kids.push(tog, block);
+    }
+    // proposal fences render as rows below, so strip them from the prose
+    const stripped = String(m.content ?? "").replace(/```(?:json)?[\s\S]*?```/g, "").trim();
+    kids.push(el("div", { class: "msg-body md", html: mdLite(stripped) }));
+    if (m.proposals?.length) kids.push(renderProposals(m, m.proposals));
+    return el("div", { class: "msg ai" }, ...kids);
+  }
+
+  async function draw() {
+    errorBox.replaceChildren();
+    log.replaceChildren();
+    if (!sessionId) {
+      log.append(el("div", { class: "empty chat-empty" },
+        el("strong", {}, "Ask the catalog assistant"),
+        aiReady ? "Nothing changes until you apply a proposal. Chats are saved as sessions you can pick up later." : "Add an OpenAI-compatible endpoint under Settings to start chatting.",
+        aiReady ? el("div", { class: "chips" },
+          ...["What needs attention?", "File uncategorized skills", "Find duplicate skills"].map((t) =>
+            el("button", { class: "chip link", onclick: () => { input.value = t; submit(); } }, t))) : null));
+      return;
+    }
+    log.append(el("div", { class: "empty" }, "Loading session…"));
+    try {
+      const s = await api(`/api/ai/chat/sessions/${encodeURIComponent(sessionId)}`);
+      log.replaceChildren(...s.messages.map(drawMsg));
+    } catch {
+      sessionId = null;
+      localStorage.removeItem(sessionIdKey);
+      draw();
+      return;
+    }
+    log.scrollTop = log.scrollHeight;
+  }
+
+  async function submit() {
+    const text = input.value.trim();
+    if (!text || awaiting || !aiReady) return;
+    errorBox.replaceChildren();
+    setBusy(true);
+    // a brand-new session gets its id on first send
+    sessionId = sessionId || freshId();
+    localStorage.setItem(sessionIdKey, sessionId);
+    log.append(el("div", { class: "msg user" }, el("div", { class: "msg-label" }, "you"), el("div", { class: "msg-body" }, text)));
+    const pending = el("div", { class: "msg ai pending" }, el("div", { class: "msg-label" }, "assistant"), el("div", { class: "msg-body thinking" }, "thinking"));
+    log.append(pending);
+    log.scrollTop = log.scrollHeight;
+    input.value = "";
+    try {
+      const r = await api("/api/ai/chat", { method: "POST", body: JSON.stringify({ session_id: sessionId, message: text }) });
+      pending.remove();
+      log.append(drawMsg({ role: "assistant", content: r.reply, reasoning: r.reasoning, proposals: r.proposals, id: r.message_id }));
+    } catch (e) {
+      pending.remove();
+      errorBox.replaceChildren(el("div", { class: "error-banner" }, e.message));
+    }
+    setBusy(false);
+    log.scrollTop = log.scrollHeight;
+    refreshSessions();
+  }
+  input.addEventListener("keydown", (e) => {
+    if (e.isComposing) return; // IME: Enter confirms the candidate, not the message
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+  });
+
+  panel.append(
+    el("h2", {}, "Assistant"),
+    el("div", { class: "chat-sessions" }, newBtn, sessionSel, delBtn),
+    ...(aiReady ? [] : [el("div", { class: "error-banner", style: "margin-bottom:12px" },
+      "AI is not configured on this server. Add an OpenAI-compatible endpoint under Settings (Ollama works: http://localhost:11434/v1) — no restart needed. Everything else in the hub works without it.")]),
+    log,
+    errorBox,
+    el("div", { class: "chat-composer" }, input, send),
+  );
+  setBusy(!aiReady);
+  draw();
+  refreshSessions();
+}
+
+// job board (rendered under the chat)
+async function viewAiJobs(app, aiReady) {
+  try {
+    const jobs = await api("/api/ai/jobs");
     const detail = el("div");
     const run = async (kind) => {
       try {
@@ -801,14 +1036,10 @@ async function viewAi(app) {
         detail.replaceChildren(renderJobResult(job));
       } catch (e) { detail.replaceChildren(errorPanel(e)); }
     };
-    app.replaceChildren(
-      el("div", { class: "page-head" }, el("h1", {}, "AI desk"), el("span", { class: "count" }, "advisory only — nothing changes until you apply it")),
+    app.append(
       el("div", { class: "panel" },
         el("h2", {}, "Run a job"),
-        aiReady
-          ? el("p", { class: "muted", style: "margin-top:0" }, "Suggestions are proposals; apply them explicitly. Nothing changes until you do.")
-          : el("div", { class: "error-banner", style: "margin-bottom:16px" },
-              "AI is not configured on this server. Add an OpenAI-compatible endpoint under Settings (Ollama works: http://localhost:11434/v1) — no restart needed. Everything else in the hub works without it."),
+        el("p", { class: "muted", style: "margin-top:0" }, "Suggestions are proposals; apply them explicitly. Nothing changes until you do."),
         el("div", { class: "checkline", style: "gap:8px" },
           el("button", { class: "btn primary", disabled: !aiReady, title: aiReady ? null : "No AI endpoint configured — see Settings", onclick: () => run("categorize") }, "Sort into categories"),
           el("button", { class: "btn", disabled: !aiReady, title: aiReady ? null : "No AI endpoint configured — see Settings", onclick: () => run("dedupe_review") }, "Review duplicates"),
@@ -902,6 +1133,8 @@ async function viewSettings(app) {
     const aiBaseUrl = el("input", { type: "text", value: s.ai.base_url, placeholder: "http://localhost:11434/v1", ...locked(s.ai.source.base_url) ? { disabled: true } : {} });
     const aiApiKey = el("input", { type: "password", placeholder: s.ai.api_key_set ? "saved — leave blank to keep" : "not set", ...locked(s.ai.source.api_key) ? { disabled: true } : {} });
     const aiModel = el("input", { type: "text", value: s.ai.model, placeholder: "llama3.1", ...locked(s.ai.source.model) ? { disabled: true } : {} });
+    const aiThinking = el("select", { "aria-label": "AI thinking level", ...locked(s.ai.source.thinking_level) ? { disabled: true } : {} },
+      ...["low", "medium", "high"].map((lv) => el("option", { value: lv, selected: (s.ai.thinking_level || "medium") === lv }, lv)));
     const srcTag = (src) => el("span", { class: `pill ${src === "env" ? "draft" : src === "settings" ? "published" : "deprecated"}` }, src === "env" ? "from env" : src === "settings" ? "from settings" : "not set");
     const aiResult = el("div");
     const saveAi = async () => {
@@ -911,6 +1144,7 @@ async function viewSettings(app) {
           // blank key field = keep the saved one
           ...(aiApiKey.value ? { api_key: aiApiKey.value } : {}),
           model: aiModel.value.trim(),
+          thinking_level: aiThinking.value,
         }) });
         toast("AI settings saved — live immediately");
         render();
@@ -955,10 +1189,13 @@ async function viewSettings(app) {
         el("h2", {}, "AI endpoint"),
         el("p", { class: "muted", style: "margin-top:0" },
           "Powers the AI desk. Any OpenAI-compatible endpoint works — Ollama: ", el("code", { class: "mono" }, "http://localhost:11434/v1"), "."),
+        el("p", { class: "muted", style: "margin:0 0 12px" },
+          "Thinking level sets how hard the model reasons before answering (sent as reasoning_effort; medium leaves it to the endpoint). Applies to chat and batch jobs."),
         el("div", { class: "form-row" },
           el("div", {}, el("label", {}, "Base URL ", srcTag(s.ai.source.base_url)), aiBaseUrl),
           el("div", {}, el("label", {}, "API key ", srcTag(s.ai.source.api_key)), aiApiKey),
-          el("div", {}, el("label", {}, "Model ", srcTag(s.ai.source.model)), aiModel)),
+          el("div", {}, el("label", {}, "Model ", srcTag(s.ai.source.model)), aiModel),
+          el("div", { style: "flex:0 0 140px" }, el("label", {}, "Thinking level ", srcTag(s.ai.source.thinking_level)), aiThinking)),
         el("div", { class: "checkline", style: "gap:8px;margin-top:12px" },
           el("button", { class: "btn", onclick: testAi }, "Test connection"),
           el("button", { class: "btn primary", onclick: saveAi }, "Save")),

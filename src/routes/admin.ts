@@ -483,11 +483,17 @@ function registerAdminRoutesInner(app: FastifyInstance) {
         base_url: ai.base_url ?? "",
         api_key_set: Boolean(ai.api_key),
         model: ai.model ?? "",
+        thinking_level: ai.thinking_level ?? "medium",
         // where each value comes from — the UI explains why a field is locked
         source: {
           base_url: getSetting("ai_base_url") ? "settings" : config.AI_BASE_URL ? "env" : "unset",
           api_key: getSetting("ai_api_key") ? "settings" : config.AI_API_KEY ? "env" : "unset",
           model: getSetting("ai_model") ? "settings" : config.AI_MODEL ? "env" : "unset",
+          thinking_level: getSetting("ai_thinking_level")
+            ? "settings"
+            : config.AI_THINKING_LEVEL !== "medium"
+              ? "env"
+              : "unset",
         },
       },
       admin_token_source: config.ADMIN_TOKEN ? "env" : "db",
@@ -500,12 +506,14 @@ function registerAdminRoutesInner(app: FastifyInstance) {
         base_url: z.string().trim().optional(),
         api_key: z.string().optional(),
         model: z.string().trim().optional(),
+        thinking_level: z.enum(["low", "medium", "high"]).optional(),
       })
       .parse((req as any).body ?? {});
     if (p.base_url !== undefined) setSetting("ai_base_url", p.base_url || null);
     if (p.api_key !== undefined) setSetting("ai_api_key", p.api_key || null);
     if (p.model !== undefined) setSetting("ai_model", p.model || null);
-    audit("admin", actor(req).id, "settings.ai.update", { model: p.model ?? null, base_url_set: Boolean(p.base_url) });
+    if (p.thinking_level !== undefined) setSetting("ai_thinking_level", p.thinking_level);
+    audit("admin", actor(req).id, "settings.ai.update", { model: p.model ?? null, base_url_set: Boolean(p.base_url), thinking_level: p.thinking_level ?? null });
     return { ok: true };
   });
 
