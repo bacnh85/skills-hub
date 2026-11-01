@@ -15,6 +15,8 @@ const el = (tag, attrs = {}, ...kids) => {
   return n;
 };
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const mcpJson = (tok) => JSON.stringify({ mcpServers: { "skills-hub": { url: `${location.origin}/mcp`, headers: { Authorization: `Bearer ${tok}` } } } }, null, 2);
+const copyBtn = (text) => el("button", { class: "btn small", onclick: () => { navigator.clipboard.writeText(text); toast("Copied"); } }, "Copy");
 
 const store = {
   get token() { return localStorage.getItem("sp_token") || ""; },
@@ -569,7 +571,11 @@ async function viewTokens(app) {
         const r = await api("/api/tokens", { method: "POST", body: JSON.stringify({ name: name.value.trim(), scopes: writeScope.checked ? ["skills:read", "skills:write"] : ["skills:read"] }) });
         created.replaceChildren(el("div", { class: "notice" },
           el("strong", {}, "Token created — copy it now, it is shown once."),
-          el("pre", { class: "code", style: "margin-top:8px" }, r.token)));
+          el("pre", { class: "code", style: "margin-top:8px" }, r.token),
+          el("div", { class: "snippet", style: "margin-top:8px" },
+            el("label", {}, "mcp.json — ready to paste"),
+            el("pre", { class: "code" }, mcpJson(r.token)),
+            copyBtn(mcpJson(r.token)))));
         name.value = "";
         const fresh = await api("/api/tokens");
         tableBody.replaceChildren(...tokenRows(fresh));
@@ -691,13 +697,17 @@ async function viewTokenDetail(app, tokenId) {
         el("h2", {}, "Connect an agent"),
         el("p", { class: "muted", style: "margin-top:0" }, "The token value is only shown at creation. If it is lost, revoke this token and issue a new one."),
         el("div", { class: "snippet", style: "margin-bottom:16px" },
-          el("label", {}, "Claude Code / pi (MCP)"),
-          el("pre", { class: "code" }, `claude mcp add skills-hub --transport http \\\n  --header "Authorization: Bearer ct_…" \\\n  ${location.origin}/mcp`),
-          el("button", { class: "btn small", onclick: (e) => { navigator.clipboard.writeText(`claude mcp add skills-hub --transport http --header "Authorization: Bearer ct_…" ${location.origin}/mcp`); toast("Copied"); } }, "Copy")),
+          el("label", {}, "mcp.json (token masked — full value is only shown at creation)"),
+          el("pre", { class: "code" }, mcpJson(tok.prefix + "…")),
+          copyBtn(mcpJson(tok.prefix + "…"))),
+        el("div", { class: "snippet", style: "margin-bottom:16px" },
+          el("label", {}, "Claude Code / pi CLI"),
+          el("pre", { class: "code" }, `claude mcp add skills-hub --transport http \\\n  --header "Authorization: Bearer ${tok.prefix}…" \\\n  ${location.origin}/mcp`),
+          copyBtn(`claude mcp add skills-hub --transport http --header "Authorization: Bearer ${tok.prefix}…" ${location.origin}/mcp`)),
         el("div", { class: "snippet" },
           el("label", {}, "npx skills (direct install)"),
           el("pre", { class: "code" }, `npx skills add ${location.origin}/s/<skill-name>.tgz`),
-          el("button", { class: "btn small", onclick: (e) => { navigator.clipboard.writeText(`npx skills add ${location.origin}/s/<skill-name>.tgz`); toast("Copied"); } }, "Copy")),
+          copyBtn(`npx skills add ${location.origin}/s/<skill-name>.tgz`)),
         tok.revoked_at
           ? el("button", { class: "btn danger", style: "margin-top:16px", onclick: purge }, "Delete permanently")
           : el("button", { class: "btn danger", style: "margin-top:16px", onclick: revoke }, "Revoke this token"),
