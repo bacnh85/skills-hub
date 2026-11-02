@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "prepare": "node -e \"try{require.resolve('typescript')}catch{process.exit(1)}\" && npm run build",
+    "prepare": "node scripts/prepare.mjs",
     "start": "node dist/server.js",
     "dev": "tsx src/server.ts",
     "test": "tsx --test test/*.test.ts"
