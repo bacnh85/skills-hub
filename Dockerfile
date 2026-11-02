@@ -2,9 +2,9 @@
 FROM node:22-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY scripts ./scripts
 RUN npm ci
 COPY tsconfig.json ./
-COPY scripts ./scripts
 COPY src ./src
 RUN npx tsc
 
