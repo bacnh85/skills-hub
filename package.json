@@ -6,8 +6,18 @@
   "engines": {
     "node": ">=22"
   },
+  "bin": {
+    "skills-hub": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "public",
+    "pi-extension",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
+    "prepare": "npm run build",
     "start": "node dist/server.js",
     "dev": "tsx src/server.ts",
     "test": "tsx --test test/*.test.ts"

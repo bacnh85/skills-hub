@@ -74,6 +74,44 @@ Or install a skill directly with the standard CLI — no MCP setup needed:
 npx skills add http://localhost:8787/s/pdf-report.tgz?token=ct_…
 ```
 
+## Two-way skill sync (per project or global)
+
+The `skills-hub` CLI syncs skills both directions between a project and this
+hub. Pin the project's skill scope in `.agents/skills.json` (committed):
+
+```json
+{ "hub": "http://localhost:8787", "skills": { "pdf-report": "1.2.0", "browser-automation": "latest" } }
+```
+
+```bash
+npx github:bacnh85/skills-hub sync     # pull pinned versions into .agents/skills/
+npx github:bacnh85/skills-hub status   # drift report (local edits, hub updates)
+npx github:bacnh85/skills-hub push     # publish changed skills back to the hub
+```
+
+Env: `HUB_URL` (or the manifest `hub` field) and `HUB_TOKEN` (`ct_…` client
+token or the admin token). Add `--global` to operate on `~/.agents/skills/`
+instead of the project dir.
+
+The sync policy is git-style, never merge: **pull refuses to overwrite local
+changes** (hash-checked against `.agents/skills.lock.json` — commit it for
+reproducible new-machine setups), and **push always creates a new version**.
+Pushes with a client token land **pending** until an admin approves them in
+the UI; pushes with the admin token publish immediately. Binary files are
+skipped with a warning (the hub stores text only).
+
+### pi coding agent
+
+Copy the bundled extension for one-command sync inside pi:
+
+```bash
+cp pi-extension/skills-hub.ts ~/.pi/agent/extensions/
+```
+
+Then `/hub` syncs and reloads (skills go live without restarting the
+session), `/hub push [names]` publishes local changes, and pi shows a
+drift notice on session start when a project manifest exists.
+
 ## How visibility works
 
 A token sees **only** what you assign:

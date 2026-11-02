@@ -1,7 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { spawn, execFile, type ChildProcess } from "node:child_process";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
@@ -198,6 +198,7 @@ test("4. MCP: per-token visibility, 3-tier disclosure, write scope enforcement",
   const gotText = (got as any).content[0].text;
   assert.match(gotText, /# PDF Report|Better rendering/);
   assert.match(gotText, /references\/api\.md/);
+  assert.match(gotText, /sha256 [0-9a-f]{16,}/, "manifest must expose per-file hashes");
 
   // tier 3: a single bundled file
   const file = await client.callTool({ name: "skills_get_file", arguments: { name: "pdf-report", path: "references/api.md" } });
@@ -354,6 +355,63 @@ test("6c. ingest: selective import only imports requested skills", async () => {
   assert.equal(empty.status, 400);
   const nonArray = await api("/api/import/run", { method: "POST", body: JSON.stringify({ url: REPO, skills: { bad: true } }) });
   assert.equal(nonArray.status, 400, "non-array skills must be refused — this is the contract the UI's Import-now Event bug violates");
+});
+
+test("6d. pinned tarball: /s/:name/:semver.tgz serves exact versions, refuses unknown and unassigned", async () => {
+  const ok = await fetch(`${BASE}/s/good-skill/1.2.0.tgz`, { headers: { authorization: `Bearer ${ADMIN}` } });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.headers.get("content-type"), "application/gzip");
+  assert.equal((await ok.arrayBuffer()).byteLength > 100, true, "tarball must not be empty");
+
+  const missing = await fetch(`${BASE}/s/good-skill/9.9.9.tgz`, { headers: { authorization: `Bearer ${ADMIN}` } });
+  assert.equal(missing.status, 404);
+
+  // unassigned client token is refused even for a valid version
+  const t = (await api("/api/tokens", { method: "POST", body: JSON.stringify({ name: "pinned-tgz-check", scopes: ["skills:read"] }) })).body.token;
+  const denied = await fetch(`${BASE}/s/good-skill/1.2.0.tgz`, { headers: { authorization: `Bearer ${t}` } });
+  assert.equal(denied.status, 403);
+});
+
+test("6e. CLI: sync pulls pinned versions, refuses clobber, push round-trips", async () => {
+  const proj = mkdtempSync(join(tmpdir(), "hub-cli-"));
+  const cli = join(import.meta.dirname, "..", "dist", "cli.js");
+  mkdirSync(join(proj, ".agents", "skills"), { recursive: true });
+  writeFileSync(join(proj, ".agents", "skills.json"), JSON.stringify({ hub: BASE, skills: { "good-skill": "1.2.0" } }));
+  const runCli = (args: string[]) =>
+    new Promise<{ code: number; out: string }>((resolve) => {
+      execFile(process.execPath, [cli, ...args], { cwd: proj, env: { ...process.env, HUB_TOKEN: ADMIN, HUB_URL: BASE } }, (e: any, stdout) =>
+        resolve({ code: e ? (e.code ?? 1) : 0, out: String(stdout) }),
+      );
+    });
+
+  // 1. sync materializes the pinned version
+  const s1 = await runCli(["sync"]);
+  assert.equal(s1.code, 0, s1.out);
+  assert.ok(existsSync(join(proj, ".agents", "skills", "good-skill", "SKILL.md")), "sync must materialize SKILL.md");
+  const lock = JSON.parse(readFileSync(join(proj, ".agents", "skills.lock.json"), "utf8"));
+  assert.equal(lock["good-skill"].version, "1.2.0");
+  assert.ok(Object.keys(lock["good-skill"].files).length >= 1, "lock must record file hashes");
+
+  // 2. local edit → status reports dirty, sync refuses to clobber
+  appendFileSync(join(proj, ".agents", "skills", "good-skill", "SKILL.md"), "\nLocal tip.\n");
+  const st = await runCli(["status", "--json"]);
+  assert.ok(JSON.parse(st.out).dirty.includes("good-skill"), st.out);
+  const s2 = await runCli(["sync"]);
+  assert.equal(s2.code, 1, "sync must refuse to overwrite local changes");
+  assert.match(s2.out, /local changes/);
+
+  // 3. push creates a new hub version (admin token publishes immediately)
+  const p1 = await runCli(["push", "good-skill"]);
+  assert.equal(p1.code, 0, p1.out);
+  assert.match(p1.out, /v1\.2\.1/);
+  const detail = await api("/api/skills/good-skill");
+  assert.equal(detail.body.versions[0].semver, "1.2.1");
+
+  // 4. post-push sync is clean (lock updated by push)
+  const s3 = await runCli(["sync"]);
+  assert.equal(s3.code, 0, s3.out);
+
+  rmSync(proj, { recursive: true, force: true });
 });
 
 // chat: sessions round-trip, proposals parse, reasoning_effort flows to the wire

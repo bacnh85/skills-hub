@@ -77,7 +77,7 @@ function buildMcpServer(actor: Actor): McpServer {
           {
             type: "text",
             text: `# ${r.resolved.name} v${r.resolved.semver}\n\n${r.body}\n\n## Bundled files (use skills_get_file to read)\n${
-              manifest.length ? manifest.map((f) => `- ${f.path} (${f.size} bytes)`).join("\n") : "(none)"
+            manifest.length ? manifest.map((f) => `- ${f.path} (${f.size} bytes, sha256 ${f.sha256})`).join("\n") : "(none)"
             }`,
           },
         ],

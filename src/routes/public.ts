@@ -88,6 +88,19 @@ export function registerPublicRoutes(app: FastifyInstance) {
     return reply.send(gzipSync(tarBuffer(files)));
   });
 
+  // pinned-version tarball — reproducible pulls for the sync CLI
+  app.get("/s/:name/:semver.tgz", async (req, reply) => {
+    if (!guard(req, reply)) return;
+    const { name, semver } = z.object({ name: z.string(), semver: z.string() }).parse((req as any).params);
+    const actor = (req as any).actor as { kind: string; id: number } | undefined;
+    if (!allowedForToken(tokenIdOf(actor), name)) return reply.code(403).send({ error: "skill not assigned" });
+    const files = filesFor(name, semver);
+    if (!files) return reply.code(404).send({ error: "not found" });
+    if (actor?.kind === "token") usageRow(actor.id, "http.get_skill_tgz", name, semver);
+    reply.header("content-type", "application/gzip");
+    return reply.send(gzipSync(tarBuffer(files)));
+  });
+
   app.get("/c/:collection.tgz", async (req, reply) => {
     if (!guard(req, reply)) return;
     const { collection } = z.object({ collection: z.string() }).parse((req as any).params);
