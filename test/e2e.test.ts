@@ -335,6 +335,27 @@ test("6. ingest: preview stores nothing, import gates flagged skills", async () 
   assert.ok(again.body.items.every((i: any) => i.action === "skipped"), "unchanged content must not bump versions");
 });
 
+test("6c. ingest: selective import only imports requested skills", async () => {
+  // all three fixture skills already exist (test 6), so `items.length` proves the filter
+  const one = await api("/api/import/run", { method: "POST", body: JSON.stringify({ url: REPO, skills: ["good-skill"] }) });
+  assert.equal(one.status, 200);
+  assert.equal(one.body.items.length, 1);
+  assert.equal(one.body.items[0].skill, "good-skill");
+  assert.equal(one.body.items[0].action, "skipped");
+
+  const unknown = await api("/api/import/run", { method: "POST", body: JSON.stringify({ url: REPO, skills: ["good-skill", "nope", "nope"] }) });
+  assert.equal(unknown.status, 200);
+  const missing = unknown.body.items.find((i: any) => i.skill === "nope");
+  assert.equal(missing.action, "error");
+  assert.equal(missing.error, "not found in source");
+  assert.equal(unknown.body.items.length, 2, "duplicate 'nope' must collapse to one error item");
+
+  const empty = await api("/api/import/run", { method: "POST", body: JSON.stringify({ url: REPO, skills: [] }) });
+  assert.equal(empty.status, 400);
+  const nonArray = await api("/api/import/run", { method: "POST", body: JSON.stringify({ url: REPO, skills: { bad: true } }) });
+  assert.equal(nonArray.status, 400, "non-array skills must be refused — this is the contract the UI's Import-now Event bug violates");
+});
+
 // chat: sessions round-trip, proposals parse, reasoning_effort flows to the wire
 // (run BEFORE test 7 so the catalog has few skills and session ids are predictable)
 const CHAT_SESSION_A = "sess-e2e-chat-a1";

@@ -84,9 +84,13 @@ function registerOpsInner(app: FastifyInstance) {
   });
 
   app.post("/api/import/run", async (req, reply) => {
-    const p = z.object({ url: z.string().min(4) }).parse(req.body);
+    const parsed = z
+      .object({ url: z.string().min(4), skills: z.array(z.string().min(1)).min(1).optional() })
+      .safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "invalid body" });
+    const p = parsed.data;
     try {
-      return await importFromUrl(p.url);
+      return await importFromUrl(p.url, null, p.skills);
     } catch (e: any) {
       return reply.code(400).send({ error: String(e.message) });
     }

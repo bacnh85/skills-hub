@@ -46,14 +46,8 @@ registerMcp(app);
 startAiWorker();
 startSourceScheduler();
 
-const welcome = {
-  name: "skills-hub",
-  ui: "/ui/index.html",
-  mcp: "/mcp (Authorization: Bearer ct_...)",
-  health: "/healthz",
-};
-
-app.get("/", async () => welcome);
+// the welcome payload moved to the UI — the root is just an entry point for humans
+app.get("/", async (_req, reply) => reply.redirect("/ui/index.html"));
 
 const start = async () => {
   try {

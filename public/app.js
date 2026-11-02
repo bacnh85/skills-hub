@@ -729,22 +729,45 @@ async function viewSources(app) {
       report.replaceChildren(el("div", { class: "empty" }, "Fetching and scanning…"));
       try {
         const rows = await api("/api/import/preview", { method: "POST", body: JSON.stringify({ url: url.value.trim() }) });
+        const sel = new Set(rows.map((r) => r.name));
+        const selAll = el("input", { type: "checkbox", "aria-label": "Select all skills", checked: true });
+        const importBtn = el("button", { class: "btn primary", style: "margin-top:16px" });
+        const syncBtn = () => {
+          const n = sel.size;
+          importBtn.disabled = n === 0;
+          importBtn.textContent = n === rows.length ? `Import all ${rows.length} skills` : `Import ${n} of ${rows.length} skills`;
+        };
+        selAll.addEventListener("change", () => {
+          if (selAll.checked) rows.forEach((r) => sel.add(r.name));
+          else sel.clear();
+          report.querySelectorAll('input[type="checkbox"][aria-label^="Select "]').forEach((b) => { b.checked = selAll.checked; });
+          syncBtn();
+        });
         report.replaceChildren(
           el("h3", {}, `Preview — ${rows.length} skills found, nothing stored`),
           el("table", { class: "ledger" },
-            el("thead", {}, el("tr", {}, el("th", {}, "Skill"), el("th", {}, "Version"), el("th", {}, "Files"), el("th", { class: "right" }, "Security"))),
-            el("tbody", {}, ...rows.map((r) => el("tr", {},
+            el("thead", {}, el("tr", {}, el("th", { class: "cell-check" }, selAll), el("th", {}, "Skill"), el("th", {}, "Version"), el("th", {}, "Files"), el("th", { class: "right" }, "Security"))),
+            el("tbody", {}, ...rows.map((r) => {
+              const box = el("input", { type: "checkbox", "aria-label": `Select ${r.name}`, checked: true });
+              box.addEventListener("change", () => { box.checked ? sel.add(r.name) : sel.delete(r.name); selAll.checked = sel.size === rows.length; syncBtn(); });
+              return el("tr", {},
+              el("td", { class: "cell-check" }, box),
               el("td", { class: "name" }, r.name),
               el("td", { class: "num" }, r.version || "auto"),
               el("td", { class: "num" }, `${r.files.length} files`),
-              el("td", { class: "right" }, r.security_flags.length ? el("span", { class: "pill flag", title: r.security_flags.join("\n") }, `${r.security_flags.length} flags`) : el("span", { class: "pill published" }, "clean")))))),
-          el("button", { class: "btn primary", style: "margin-top:16px", onclick: run }, `Import these ${rows.length} skills`));
+              el("td", { class: "right" }, r.security_flags.length ? el("span", { class: "pill flag", title: r.security_flags.join("\n") }, `${r.security_flags.length} flags`) : el("span", { class: "pill published" }, "clean")));
+            })),
+          ),
+          importBtn);
+        importBtn.addEventListener("click", () => run([...sel]));
+        syncBtn();
       } catch (e) { report.replaceChildren(el("div", { class: "error-banner" }, e.message)); }
     };
-    const run = async () => {
+    const run = async (names = null) => {
       try {
-        const r = await api("/api/import/run", { method: "POST", body: JSON.stringify({ url: url.value.trim() }) });
-        report.replaceChildren(el("div", { class: "notice" }, r.items.map((i) => `${i.skill}: ${i.action}${i.semver ? " " + i.semver : ""}${i.pending ? " (needs approval)" : ""}`).join(" · ")));
+        const skills = Array.isArray(names) ? names : null;
+        const r = await api("/api/import/run", { method: "POST", body: JSON.stringify({ url: url.value.trim(), ...(skills ? { skills } : {}) }) });
+        report.replaceChildren(el("div", { class: "notice" }, r.items.map((i) => `${i.skill}: ${i.action}${i.semver ? " " + i.semver : ""}${i.pending ? " (needs approval)" : ""}${i.error ? ` (${i.error})` : ""}`).join(" · ")));
         const fresh = await api("/api/sources");
         body.replaceChildren(...sourceRows(fresh));
       } catch (e) { toast(e.message, true); }

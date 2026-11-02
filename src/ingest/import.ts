@@ -15,12 +15,25 @@ export interface ImportReportItem {
   error?: string;
 }
 
-export async function importFromUrl(url: string, actorId: number | null = null): Promise<{ items: ImportReportItem[] }> {
+export async function importFromUrl(
+  url: string,
+  actorId: number | null = null,
+  only?: string[],
+): Promise<{ items: ImportReportItem[] }> {
+  if (only) only = [...new Set(only)];
   const parsed = parseSource(url);
   const fetched = await fetchSource(parsed);
   const items: ImportReportItem[] = [];
   try {
-    const found = scanDir(fetched.dir);
+    let found = scanDir(fetched.dir);
+    if (only) {
+      const want = new Set(only);
+      const picked = found.filter((f) => want.has(f.name));
+      for (const name of only) {
+        if (!picked.some((f) => f.name === name)) items.push({ skill: name, action: "error", error: "not found in source" });
+      }
+      found = picked;
+    }
     for (const f of found) {
       items.push(await importOne(f, actorId));
     }
