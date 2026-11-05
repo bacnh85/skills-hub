@@ -94,6 +94,68 @@ function pill(status) {
 
 let state = { page: "dashboard", skill: null, token: null };
 
+// ---------- edit drafts (GitLab Web IDE model) ----------
+// Edits stage automatically into localStorage and survive reload; publishing
+// commits the whole draft as a new immutable version. Keyed per skill.
+function draftKey(name) { return `sp_draft_${name}`; }
+function loadDraft(name, baseVersionId) {
+  try {
+    const d = JSON.parse(localStorage.getItem(draftKey(name)) || "null");
+    if (d && d.baseVersionId === baseVersionId) return d;
+  } catch { /* corrupt draft: ignore */ }
+  return null;
+}
+function saveDraft(name, baseVersionId, body, files, extra = {}) {
+  localStorage.setItem(draftKey(name), JSON.stringify({ baseVersionId, body, files, savedAt: Date.now(), ...extra }));
+}
+function clearDraft(name) { localStorage.removeItem(draftKey(name)); }
+function draftFilesChanged(d) {
+  // body lives in files[SKILL.md] too — count only file rows
+  return d.files?.filter((f) => f.status !== "unchanged").length || 0;
+}
+
+// ---------- CodeMirror (vendored 5.65.16, lazy) ----------
+// Plain-browser builds attach to window.CodeMirror. Mode dep order:
+// xml → meta → markdown → gfm → overlay; yaml → yaml-frontmatter;
+// javascript, css → htmlmixed; shell, python standalone.
+let cmPromise = null;
+function loadCodeMirror() {
+  if (window.CodeMirror) return Promise.resolve(window.CodeMirror);
+  if (cmPromise) return cmPromise;
+  const base = "vendor/codemirror/";
+  const scripts = [
+    "codemirror.js",
+    "mode/xml.js", "mode/meta.js", "mode/markdown.js", "mode/gfm.js",
+    "addon/overlay.js", "mode/yaml.js", "mode/yaml-frontmatter.js",
+    "mode/javascript.js", "mode/css.js", "mode/htmlmixed.js",
+    "mode/shell.js", "mode/python.js",
+  ];
+  cmPromise = (async () => {
+    for (const s of scripts) await loadScript(base + s);
+    return window.CodeMirror || null;
+  })().catch(() => {
+    cmPromise = null; // allow retry on the next editor open
+    return null;
+  });
+  return cmPromise;
+}
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error("failed to load " + src));
+    document.head.append(s);
+  });
+}
+function modeForPath(path) {
+  const ext = (path.match(/\.[a-z0-9]+$/) || [""])[0].toLowerCase();
+  if (path === "SKILL.md" || ext === ".md") return "yaml-frontmatter";
+  return { ".js": "text/javascript", ".mjs": "text/javascript", ".ts": "text/javascript", ".jsx": "text/javascript",
+           ".json": "application/json", ".py": "python", ".sh": "shell", ".bash": "shell", ".zsh": "shell",
+           ".yaml": "yaml", ".yml": "yaml", ".html": "htmlmixed", ".css": "text/css", ".xml": "xml" }[ext] || "text/plain";
+}
+
 function render() {
   const nav = $("#nav");
   nav.replaceChildren();
@@ -107,14 +169,221 @@ function render() {
   }
   const app = $("#app");
   if (!store.token) return renderLogin(app);
+  if (state.editor) return viewEditor(app);
   const view = { dashboard: viewDashboard, skills: viewSkills, pending: viewPending, taxonomy: viewTaxonomy, tokens: viewTokens, sources: viewSources, ai: viewAi, audit: viewAudit, settings: viewSettings }[state.page] || viewDashboard;
   view(app);
+}
+
+// ---------- skill editor (GitLab Web IDE model) ----------
+async function viewEditor(app) {
+  const name = state.editor.skill;
+  app.replaceChildren(el("div", { class: "empty" }, "Opening editor…"));
+  let s;
+  try { s = await api(`/api/skills/${encodeURIComponent(name)}`); } catch (e) { app.replaceChildren(errorPanel(e)); return; }
+  if (!s.current) { app.replaceChildren(errorPanel(new Error("skill has no current version to edit"))); return; }
+  const baseVersionId = s.current_version_id;
+
+  // draft = { baseVersionId, body: string|null, files: [{path, status, orig?, content}], semver, savedAt }
+  let draft = loadDraft(name, baseVersionId);
+  if (!draft) {
+    const files = [{ path: "SKILL.md", status: "unchanged", orig: s.current.body, content: s.current.body }];
+    for (const f of s.current.files || []) {
+      let content = null;
+      try { content = (await api(`/api/skills/${encodeURIComponent(name)}/versions/${baseVersionId}/files/${f.path.split("/").map(encodeURIComponent).join("/")}`)).content; } catch { /* unreadable: stays closed */ }
+      files.push({ path: f.path, status: "unchanged", orig: content, content });
+    }
+    draft = { baseVersionId, body: null, files, semver: bumpPatch(s.current_semver) };
+  }
+
+  let active = draft.files[0];
+  const stage = () => {
+    // mark file statuses against orig
+    for (const f of draft.files) f.status = f.content === null ? "deleted" : f.orig === null ? "added" : f.content === f.orig ? "unchanged" : "modified";
+    draft.body = draft.files.find((f) => f.path === "SKILL.md")?.content ?? draft.body;
+    saveDraft(name, baseVersionId, draft.body, draft.files, { semver: draft.semver });
+    draw();
+  };
+
+  const dirtyCount = () => draft.files.filter((f) => f.status !== "unchanged").length;
+
+  // rich editor: CodeMirror with line numbers + syntax highlight per file type.
+  // Loaded lazily; if it fails (offline first load) we fall back to a plain textarea.
+  const editorHost = el("div", { class: "editor-main" });
+  let cm = null;
+  let ta = null; // textarea fallback
+  const syncTa = () => {
+    if (cm) {
+      cm.setOption("mode", modeForPath(active.path));
+      cm.setValue(active.content ?? "");
+      cm.setOption("readOnly", active.content === null); // deleted file: read-only blank
+      cm.clearHistory();
+      cm.refresh();
+    } else if (ta) {
+      ta.value = active.content ?? "";
+      ta.disabled = active.content === null;
+    }
+  };
+  const onInput = (v) => { active.content = v; clearTimeout(stage.t); stage.t = setTimeout(stage, 400); };
+
+  const fileList = el("div", { class: "editor-files", role: "listbox", "aria-label": "Bundle files" });
+  const semverIn = el("input", { type: "text", value: draft.semver, class: "num", style: "width:110px", "aria-label": "New version" });
+  semverIn.addEventListener("change", () => { draft.semver = semverIn.value.trim() || bumpPatch(s.current_semver); saveDraft(name, baseVersionId, draft.body, draft.files, { semver: draft.semver }); });
+
+  const newFile = () => {
+    const input = el("input", { type: "text", placeholder: "references/notes.md", class: "num", style: "width:100%" });
+    const add = () => {
+      const p = input.value.trim().replace(/^\/+/, "");
+      if (!p) return;
+      if (draft.files.some((f) => f.path === p)) { toast("Already in the bundle", true); return; }
+      if (p === "SKILL.md") { toast("SKILL.md is always in the bundle", true); return; }
+      draft.files.push({ path: p, status: "added", orig: null, content: "" });
+      active = draft.files[draft.files.length - 1];
+      stage(); syncTa();
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } });
+    const backdrop = el("div", { class: "backdrop", onclick: (e) => { if (e.target === backdrop) backdrop.remove(); } },
+      el("div", { class: "modal", role: "dialog", "aria-modal": "true" },
+        el("h2", {}, "Add a file"),
+        el("p", { class: "muted" }, "Path inside the skill bundle — e.g. references/api.md, scripts/run.py, assets/logo.svg"),
+        input,
+        el("div", { class: "checkline", style: "justify-content:flex-end;gap:8px;margin-top:16px" },
+          el("button", { class: "btn", onclick: () => backdrop.remove() }, "Cancel"),
+          el("button", { class: "btn primary", onclick: add }, "Add"))));
+    document.body.append(backdrop);
+    input.focus();
+  };
+
+  const removeFile = () => {
+    if (active.path === "SKILL.md") { toast("SKILL.md cannot be removed", true); return; }
+    if (active.orig === null) { draft.files = draft.files.filter((f) => f !== active); active = draft.files[0]; stage(); syncTa(); }
+    else { active.content = null; stage(); syncTa(); }
+  };
+
+  const exit = () => { state.editor = null; render(); };
+  const review = () => { if (dirtyCount()) viewReview(app, name, s, draft, exit); else toast("No changes to review"); };
+  const reviewBtn = el("button", { class: "btn primary", onclick: review }, "Review changes");
+
+  const draw = () => {
+    fileList.replaceChildren(...draft.files.map((f) => {
+      const b = el("button", { class: `editor-file${f === active ? " active" : ""}`, role: "option", "aria-selected": f === active ? "true" : "false", onclick: () => { active = f; syncTa(); draw(); } },
+        el("span", { class: "editor-file-dot", "data-status": f.status }),
+        el("span", { class: "mono", style: "min-width:0;overflow:hidden;text-overflow:ellipsis" }, f.path));
+      return b;
+    }));
+    statusChip.textContent = dirtyCount() ? `${dirtyCount()} change${dirtyCount() === 1 ? "" : "s"} staged` : "No changes";
+    statusChip.className = `pill ${dirtyCount() ? "pending" : "draft"}`;
+    reviewBtn.disabled = !dirtyCount();
+  };
+  const statusChip = el("span", { class: "pill draft" }, "No changes");
+
+  app.replaceChildren(
+    el("div", { class: "page-head" },
+      el("h1", { class: "mono", style: "font-size:1.5625rem" }, name),
+      el("span", { class: "muted num" }, `v${s.current_semver} → `),
+      semverIn,
+      statusChip,
+      el("div", { class: "actions" },
+        el("button", { class: "btn", onclick: exit }, "Back"),
+        el("button", { class: "btn", onclick: newFile }, "Add file"),
+        el("button", { class: "btn", onclick: removeFile }, active?.orig === null && active?.path !== "SKILL.md" ? "Remove file" : "Delete file"),
+        reviewBtn)),
+    el("div", { class: "editor-grid" },
+      fileList,
+      editorHost),
+  );
+  draw();
+  loadCodeMirror().then((CM) => {
+    if (!app.contains(editorHost)) return; // user navigated away while loading
+    if (CM) {
+      cm = CM(editorHost, {
+        lineNumbers: true,
+        mode: modeForPath(active.path),
+        theme: document.documentElement.dataset.theme === "dark" ? "ledger-dark" : "ledger",
+        lineWrapping: true,
+        indentUnit: 2,
+        tabSize: 2,
+        viewportMargin: Infinity, // let the host scroll, not an inner box
+        extraKeys: { "Alt-F": false }, // keep browser find
+      });
+      cm.on("change", () => onInput(cm.getValue()));
+    } else {
+      ta = el("textarea", { class: "editor-ta", spellcheck: "false", placeholder: "File content" });
+      ta.addEventListener("input", () => onInput(ta.value));
+      editorHost.append(ta);
+    }
+    syncTa();
+    (cm ? cm.focus() : ta.focus());
+  });
+}
+
+// unified-diff line calculator — no dependency, ~40 lines
+function diffLines(a, b) {
+  // LCS table on lines; small files only (skills are KBs)
+  const A = a === null || a === undefined ? [] : String(a).split("\n");
+  const B = b === null || b === undefined ? [] : String(b).split("\n");
+  const n = A.length, m = B.length;
+  const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const out = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (A[i] === B[j]) { out.push({ t: " ", s: A[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: "-", s: A[i] }); i++; }
+    else { out.push({ t: "+", s: B[j] }); j++; }
+  }
+  while (i < n) { out.push({ t: "-", s: A[i] }); i++; }
+  while (j < m) { out.push({ t: "+", s: B[j] }); j++; }
+  return out;
+}
+
+function viewReview(app, name, s, draft, exitEditor) {
+  const changed = draft.files.filter((f) => f.status !== "unchanged");
+  const publish = async () => {
+    try {
+      const payload = {
+        semver: draft.semver,
+        body: draft.files.find((f) => f.path === "SKILL.md").content,
+        files: draft.files
+          .filter((f) => f.path !== "SKILL.md" && f.content !== null)
+          .map((f) => ({ path: f.path, content: f.content, encoding: "utf8" })),
+      };
+      const r = await api(`/api/skills/${encodeURIComponent(name)}/versions`, { method: "POST", body: JSON.stringify(payload) });
+      if (!r.version_id) throw new Error(r.error || "publish failed");
+      clearDraft(name);
+      toast(`Published v${draft.semver} (lint ${r.lint?.score ?? "—"})`);
+      exitEditor();
+    } catch (e) { toast(e.message, true); }
+  };
+  app.replaceChildren(
+    el("div", { class: "page-head" },
+      el("h1", { class: "mono", style: "font-size:1.5625rem" }, `Review — ${name}`),
+      el("span", { class: "muted num" }, `v${s.current_semver} → v${draft.semver}`),
+      el("div", { class: "actions" },
+        el("button", { class: "btn", onclick: () => viewEditor(app) }, "Keep editing"),
+        el("button", { class: "btn primary", onclick: publish }, `Publish v${draft.semver}`))),
+    ...changed.map((f) => {
+      const d = diffLines(f.orig, f.content);
+      return el("div", { class: "panel diff-panel" },
+        el("div", { class: "modal-head" },
+          el("h2", { class: "mono", style: "margin:0;font-size:var(--fs-md)" }, f.path),
+          el("span", { class: `pill ${f.status === "added" ? "published" : f.status === "deleted" ? "flag" : "pending"}` }, f.status)),
+        el("pre", { class: "code diff" }, d.map((l) =>
+          el("span", { class: `dl ${l.t === "+" ? "add" : l.t === "-" ? "del" : ""}` }, (l.t === " " ? " " : l.t) + " " + l.s + "\n"))));
+    }),
+  );
+}
+
+function bumpPatch(v) {
+  const m = String(v || "0.0.0").match(/^(\d+)\.(\d+)\.(\d+)/);
+  return m ? `${m[1]}.${m[2]}.${Number(m[3]) + 1}` : "0.0.1";
 }
 
 function go(page) {
   state.page = page;
   state.skill = null;
   state.token = null;
+  state.editor = null;
   location.hash = page;
   render();
 }
@@ -402,8 +671,22 @@ async function viewSkillDetail(app, name) {
       el("div", { class: "page-head" },
         el("h1", { class: "mono", style: "font-size:1.5625rem" }, s.name),
         pill(s.status),
-        el("div", { class: "actions" }, el("button", { class: "btn", onclick: () => go("skills") }, "Back to skills"))),
+        el("div", { class: "actions" },
+          el("button", { class: "btn primary", onclick: () => { state.editor = { skill: name }; render(); } }, "Edit"),
+          el("button", { class: "btn", onclick: () => go("skills") }, "Back to skills"))),
     ];
+    const draft = s.current ? loadDraft(name, s.current_version_id) : null;
+    if (draft) {
+      const when = draft.savedAt ? new Date(draft.savedAt).toLocaleString() : "earlier";
+      nodes.push(el("div", { class: "draft-banner", role: "status" },
+        el("span", {}, `Unpublished draft from ${when} — ${draftFilesChanged(draft)} file change${draftFilesChanged(draft) === 1 ? "" : "s"} staged in this browser.`),
+        el("div", { class: "actions" },
+          el("button", { class: "btn small primary", onclick: () => { state.editor = { skill: name }; render(); } }, "Resume editing"),
+          el("button", { class: "btn small danger", onclick: async () => {
+            if (!(await confirmDialog(`Discard the draft for '${name}'?`, "Your staged changes are removed from this browser. The published skill is untouched.", "Discard draft"))) return;
+            clearDraft(name); toast("Draft discarded"); render();
+          } }, "Discard"))));
+    }
     if (s.security_flags?.length) {
       nodes.push(el("div", { class: "error-banner" }, "Security review required: " + s.security_flags.join(" · ")));
     }
@@ -433,7 +716,7 @@ async function viewSkillDetail(app, name) {
       if (s.current.files?.length) {
         parts.push(el("h3", {}, "Bundled files"));
         parts.push(el("table", { class: "ledger" }, el("tbody", {}, ...s.current.files.map((f) =>
-          el("tr", {},
+          el("tr", { class: "row", tabindex: "0", onclick: () => openFileViewer(name, s.current_version_id, f), onkeydown: (e) => { if (e.key === "Enter") openFileViewer(name, s.current_version_id, f); } },
             el("td", { class: "name" }, f.path),
             el("td", { class: "num" }, f.size + " B"),
             el("td", { class: "num right", title: f.sha256 }, f.sha256.slice(0, 12) + "…"))))));
@@ -449,6 +732,37 @@ async function viewSkillDetail(app, name) {
       app.append(el("div", { class: "panel" }, ...parts));
     }
   } catch (e) { app.replaceChildren(errorPanel(e), el("button", { class: "btn", onclick: () => go("skills") }, "Back")); }
+}
+
+// view one bundled file (read-only, from the current version)
+async function openFileViewer(name, versionId, f) {
+  let data;
+  try { data = await api(`/api/skills/${encodeURIComponent(name)}/versions/${versionId}/files/${f.path.split("/").map(encodeURIComponent).join("/")}`); }
+  catch (e) { toast(e.message, true); return; }
+  const close = () => backdrop.remove();
+  const body = el("pre", { class: "code", style: "margin:0;max-height:60vh;overflow:auto" }, data.content);
+  const backdrop = el("div", { class: "backdrop", onclick: (e) => { if (e.target === backdrop) close(); } },
+    el("div", { class: "modal modal-wide", role: "dialog", "aria-modal": "true", "aria-label": f.path },
+      el("div", { class: "modal-head" },
+        el("h2", { class: "mono", style: "margin:0;font-size:var(--fs-md)" }, f.path),
+        el("span", { class: "muted num" }, `${f.size} B`),
+        el("button", { class: "btn small", onclick: close }, "Close")),
+      body));
+  document.body.append(backdrop);
+  // read-only CodeMirror: same highlight + line numbers as the editor
+  loadCodeMirror().then((CM) => {
+    if (!CM || !document.body.contains(backdrop)) return;
+    const host = el("div");
+    body.replaceWith(host);
+    CM(host, {
+      value: data.content,
+      mode: modeForPath(f.path),
+      theme: document.documentElement.dataset.theme === "dark" ? "ledger-dark" : "ledger",
+      lineNumbers: true,
+      lineWrapping: true,
+      readOnly: true,
+    });
+  });
 }
 
 // ---------- pending ----------

@@ -590,6 +590,41 @@ test("9. client-served endpoints honour PUBLIC_SKILL_ACCESS=false", async () => 
   assert.equal(res.status, 401, "anonymous read must be refused when PUBLIC_SKILL_ACCESS is false");
 });
 
+test("9b. editor flow: file content GET, edit round-trip as a new version (draft model)", async () => {
+  // read a bundled file's content back
+  const detail = await api("/api/skills/pdf-report");
+  const vid = detail.body.current_version_id;
+  const file = await api(`/api/skills/pdf-report/versions/${vid}/files/references/api.md`);
+  assert.equal(file.status, 200);
+  assert.match(file.body.content, /render\(opts\)/);
+
+  // unknown file / wrong skill-version pairing must 404
+  assert.equal((await api(`/api/skills/pdf-report/versions/${vid}/files/references/nope.md`)).status, 404);
+  assert.equal((await api(`/api/skills/pdf-report/versions/999999/files/references/api.md`)).status, 404);
+
+  // publish an edited bundle as a new version — the editor's commit step
+  const pub = await api("/api/skills/pdf-report/versions", {
+    method: "POST",
+    body: JSON.stringify({
+      semver: "1.0.1",
+      body: detail.body.current.body + "\n3. Sign the output",
+      files: [
+        { path: "references/api.md", content: "# API\nrender(opts) v2", encoding: "utf8" },
+        { path: "assets/logo.svg", content: "PHN2Zz48L3N2Zz4=", encoding: "base64" },
+      ],
+    }),
+  });
+  assert.equal(pub.status, 201);
+
+  const after = await api("/api/skills/pdf-report");
+  assert.equal(after.body.current_semver, "1.0.1");
+  assert.equal(after.body.current.files.length, 2, "edited bundle replaces the file set");
+  const edited = await api(`/api/skills/pdf-report/versions/${after.body.current_version_id}/files/references/api.md`);
+  assert.match(edited.body.content, /v2/);
+  const svg = await api(`/api/skills/pdf-report/versions/${after.body.current_version_id}/files/assets/logo.svg`);
+  assert.equal(svg.body.content, "<svg></svg>", "base64-decoded on store");
+});
+
 test("10. revoked token: detail still loads, purge deletes it, purge of active is refused", async () => {
   const tok = await api("/api/tokens", { method: "POST", body: JSON.stringify({ name: "purge-probe" }) });
   const id = tok.body.id;

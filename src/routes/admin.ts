@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { db, audit, genToken, sha256 } from "../db.ts";
 import { adminGuard, type Actor } from "../auth.ts";
-import { publishVersion, approveVersion, rejectVersion, getResolved, listVersionFiles, deleteSkillWithSnapshot, restoreSkill, type SkillSnapshot } from "../skills/service.ts";
+import { publishVersion, approveVersion, rejectVersion, getResolved, listVersionFiles, getVersionFile, deleteSkillWithSnapshot, restoreSkill, type SkillSnapshot } from "../skills/service.ts";
 import { config, getSetting, setSetting, aiConfig } from "../config.ts";
 
 const body200 = "This is placeholder body content for a new skill. Replace with real instructions before publishing.\n".repeat(5);
@@ -304,13 +304,27 @@ function registerAdminRoutesInner(app: FastifyInstance) {
   });
 
   // ---------- versions ----------
+  app.get("/api/skills/:name/versions/:versionId/files/*", async (req, reply) => {
+    const { name, versionId } = z.object({ name: z.string(), versionId: z.coerce.number() }).parse((req as any).params);
+    const path = decodeURIComponent((req as any).params["*"]);
+    if (!path || path.includes("..")) return reply.code(400).send({ error: "bad path" });
+    const s = db.prepare("SELECT id FROM skills WHERE name = ?").get(name) as any;
+    if (!s) return reply.code(404).send({ error: "skill not found" });
+    const v = db.prepare("SELECT skill_id FROM skill_versions WHERE id = ?").get(versionId) as any;
+    if (!v || v.skill_id !== s.id) return reply.code(404).send({ error: "version not found" });
+    const f = getVersionFile(versionId, path);
+    if (!f) return reply.code(404).send({ error: "file not found" });
+    return { path, content: f.content.toString("utf8"), size: f.content.length };
+  });
+
   app.post("/api/skills/:name/versions", async (req, reply) => {
     const { name } = z.object({ name: z.string() }).parse((req as any).params);
     const p = z
       .object({
         semver: z.string().min(1),
         body: z.string().min(1),
-        files: z.array(z.object({ path: z.string(), content: z.string() })).default([]),
+        frontmatter: z.record(z.string(), z.unknown()).optional(),
+        files: z.array(z.object({ path: z.string(), content: z.string(), encoding: z.enum(["utf8", "base64"]).default("utf8") })).default([]),
         source_url: z.string().optional(),
       })
       .parse(req.body);
@@ -318,7 +332,11 @@ function registerAdminRoutesInner(app: FastifyInstance) {
       skillName: name,
       semver: p.semver,
       body: p.body,
-      files: p.files,
+      frontmatter: p.frontmatter,
+      files: p.files.map((f) => ({
+        path: f.path,
+        content: f.encoding === "base64" ? Buffer.from(f.content, "base64") : f.content,
+      })),
       sourceUrl: p.source_url,
       authorKind: "admin",
     });

@@ -897,6 +897,123 @@ pre.code {
   gap: var(--sp-1);
 }
 
+/* ---------- skill editor ---------- */
+.modal-wide {
+  width: min(920px, 100%);
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+.modal-head h2 {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.modal-head .muted {
+  margin-left: auto;
+  white-space: nowrap;
+}
+.draft-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  background: var(--amber-soft);
+  color: var(--ink);
+  border-radius: var(--radius-md);
+  padding: var(--sp-2) var(--sp-3);
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-sm);
+}
+.draft-banner .actions {
+  margin-left: auto;
+}
+.editor-grid {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: var(--sp-2);
+  align-items: start;
+}
+.editor-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--sp-1);
+}
+.editor-file {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  width: 100%;
+  padding: 6px var(--sp-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+}
+.editor-file:hover {
+  background: var(--hover-surface);
+}
+.editor-file:focus-visible {
+  outline: 2px solid var(--forest);
+  outline-offset: -2px;
+}
+.editor-file.active {
+  background: var(--forest-soft);
+}
+.editor-file-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--rule);
+}
+.editor-file-dot[data-status="modified"],
+.editor-file-dot[data-status="added"] {
+  background: var(--amber);
+}
+.editor-file-dot[data-status="deleted"] {
+  background: var(--rust);
+}
+.editor-main {
+  min-width: 0;
+}
+.editor-ta {
+  width: 100%;
+  min-height: 60vh;
+  resize: vertical;
+}
+.editor-ta:disabled {
+  opacity: 0.55;
+}
+.diff-panel {
+  margin-bottom: var(--sp-2);
+}
+pre.code.diff {
+  white-space: pre;
+  overflow-x: auto;
+}
+.dl {
+  display: inline-block;
+  width: 100%;
+}
+.dl.add {
+  background: var(--forest-soft);
+}
+.dl.del {
+  background: var(--rust-soft);
+}
+
 /* ---------- assistant chat ---------- */
 .chat-sessions {
   display: flex;
@@ -1097,5 +1214,167 @@ pre.code {
   }
   .page-head h1 {
     font-size: var(--fs-xl);
+  }
+}
+
+/* ---------- CodeMirror editor (themes map DESIGN.md tokens) ---------- */
+/* Light: paper/surface/ink + forest keyword accent.
+   Dark: ink desk equivalents. cm-s-* overrides the bundled default theme. */
+.cm-s-ledger.CodeMirror,
+.cm-s-ledger-dark.CodeMirror {
+  background: var(--paper-deep);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  height: auto;
+}
+.cm-s-ledger .CodeMirror-gutters,
+.cm-s-ledger-dark .CodeMirror-gutters {
+  background: var(--paper-deep);
+  border-right: 1px solid var(--rule);
+}
+.cm-s-ledger .CodeMirror-linenumber,
+.cm-s-ledger-dark .CodeMirror-linenumber {
+  color: var(--index-numeral);
+  font-variant-numeric: tabular-nums;
+}
+.cm-s-ledger .CodeMirror-cursor,
+.cm-s-ledger-dark .CodeMirror-cursor {
+  border-left: 2px solid var(--ink);
+}
+.cm-s-ledger .CodeMirror-selected,
+.cm-s-ledger-dark .CodeMirror-selected {
+  background: var(--forest-soft);
+}
+.cm-s-ledger .CodeMirror-activeline-background,
+.cm-s-ledger-dark .CodeMirror-activeline-background {
+  background: var(--row-hover);
+}
+/* syntax roles — one accent (forest) for structure, amber for emphasis, soft ink for prose */
+.cm-s-ledger .cm-header,
+.cm-s-ledger-dark .cm-header {
+  color: var(--ink);
+  font-weight: 600;
+}
+.cm-s-ledger .cm-quote,
+.cm-s-ledger-dark .cm-quote {
+  color: var(--ink-soft);
+  font-style: italic;
+}
+.cm-s-ledger .cm-keyword,
+.cm-s-ledger-dark .cm-keyword {
+  color: var(--forest);
+}
+.cm-s-ledger .cm-atom,
+.cm-s-ledger-dark .cm-atom {
+  color: var(--amber);
+}
+.cm-s-ledger .cm-number,
+.cm-s-ledger-dark .cm-number {
+  color: var(--amber);
+}
+.cm-s-ledger .cm-def,
+.cm-s-ledger-dark .cm-def {
+  color: var(--ink);
+  font-weight: 600;
+}
+.cm-s-ledger .cm-variable,
+.cm-s-ledger-dark .cm-variable {
+  color: var(--ink);
+}
+.cm-s-ledger .cm-variable-2,
+.cm-s-ledger-dark .cm-variable-2 {
+  color: var(--ink);
+}
+.cm-s-ledger .cm-variable-3,
+.cm-s-ledger-dark .cm-variable-3,
+.cm-s-ledger .cm-type,
+.cm-s-ledger-dark .cm-type {
+  color: var(--ink-soft);
+}
+.cm-s-ledger .cm-property,
+.cm-s-ledger-dark .cm-property {
+  color: var(--ink);
+}
+.cm-s-ledger .cm-operator,
+.cm-s-ledger-dark .cm-operator {
+  color: var(--ink-soft);
+}
+.cm-s-ledger .cm-comment,
+.cm-s-ledger-dark .cm-comment {
+  color: var(--ink-soft);
+  font-style: italic;
+}
+.cm-s-ledger .cm-string,
+.cm-s-ledger-dark .cm-string {
+  color: var(--forest);
+}
+.cm-s-ledger .cm-string-2,
+.cm-s-ledger-dark .cm-string-2 {
+  color: var(--forest);
+}
+.cm-s-ledger .cm-meta,
+.cm-s-ledger-dark .cm-meta {
+  color: var(--ink-soft);
+}
+.cm-s-ledger .cm-tag,
+.cm-s-ledger-dark .cm-tag {
+  color: var(--forest);
+}
+.cm-s-ledger .cm-attribute,
+.cm-s-ledger-dark .cm-attribute {
+  color: var(--amber);
+}
+.cm-s-ledger .cm-builtin,
+.cm-s-ledger-dark .cm-builtin {
+  color: var(--amber);
+}
+.cm-s-ledger .cm-link,
+.cm-s-ledger-dark .cm-link {
+  color: var(--forest);
+  text-decoration: underline;
+}
+.cm-s-ledger .cm-url,
+.cm-s-ledger-dark .cm-url {
+  color: var(--forest);
+}
+.cm-s-ledger .cm-formatting,
+.cm-s-ledger-dark .cm-formatting {
+  color: var(--index-numeral);
+}
+.cm-s-ledger .cm-hr,
+.cm-s-ledger-dark .cm-hr {
+  color: var(--rule-strong, var(--ink-soft));
+}
+/* yaml-frontmatter: the --- fences read as rules, keys as definitions */
+.cm-s-ledger .cm-frontmatterResolution,
+.cm-s-ledger-dark .cm-frontmatterResolution {
+  color: var(--rule-strong, var(--ink-soft));
+}
+.CodeMirror-focused .CodeMirror-selected {
+  background: var(--forest-soft);
+}
+/* modal viewer: cap height so a long file scrolls inside the dialog,
+   not past the backdrop. CM virtualizes when viewportMargin is default. */
+.modal .CodeMirror {
+  max-height: 60vh;
+}
+.modal .CodeMirror-scroll {
+  max-height: 60vh;
+  overflow: auto;
+}
+/* keyboard focus ring on the editor itself (interactive element) */
+.CodeMirror:focus-visible {
+  outline: 2px solid var(--forest);
+  outline-offset: -1px;
+}
+/* reduced motion: CodeMirror's cursor blink is CSS-keyframe based */
+@media (prefers-reduced-motion: reduce) {
+  .CodeMirror-cursor {
+    animation: none !important;
+    opacity: 1 !important;
   }
 }
